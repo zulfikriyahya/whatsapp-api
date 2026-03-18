@@ -3,7 +3,6 @@
 OUTPUT="blueprint.md"
 > "$OUTPUT"
 
-# Ekstensi mapping untuk code block language
 get_lang() {
   case "${1##*.}" in
     ts) echo "ts" ;;
@@ -16,24 +15,19 @@ get_lang() {
   esac
 }
 
-# Daftar file sesuai struktur project
 FILES=(
-  # Root config
   "ecosystem.config.js"
   "nest-cli.json"
   "package.json"
   "tsconfig.json"
   "tsconfig.build.json"
 
-  # Prisma
   "prisma/schema.prisma"
   "prisma/seed.ts"
 
-  # Main
   "src/main.ts"
   "src/app.module.ts"
 
-  # Common - constants
   "src/common/constants/cache-keys.constant.ts"
   "src/common/constants/error-codes.constant.ts"
   "src/common/constants/event-names.constant.ts"
@@ -41,17 +35,14 @@ FILES=(
   "src/common/constants/queue-names.constant.ts"
   "src/common/constants/quota.constant.ts"
 
-  # Common - decorators
   "src/common/decorators/api-key.decorator.ts"
   "src/common/decorators/current-user.decorator.ts"
   "src/common/decorators/public.decorator.ts"
   "src/common/decorators/roles.decorator.ts"
 
-  # Common - dto
   "src/common/dto/pagination.dto.ts"
   "src/common/dto/response.dto.ts"
 
-  # Common - enums
   "src/common/enums/match-type.enum.ts"
   "src/common/enums/message-status.enum.ts"
   "src/common/enums/recurrence-type.enum.ts"
@@ -60,11 +51,9 @@ FILES=(
   "src/common/enums/status.enum.ts"
   "src/common/enums/tier.enum.ts"
 
-  # Common - filters
   "src/common/filters/http-exception.filter.ts"
   "src/common/filters/prisma-exception.filter.ts"
 
-  # Common - guards
   "src/common/guards/active-user.guard.ts"
   "src/common/guards/api-key.guard.ts"
   "src/common/guards/google-auth.guard.ts"
@@ -72,26 +61,22 @@ FILES=(
   "src/common/guards/quota.guard.ts"
   "src/common/guards/roles.guard.ts"
 
-  # Common - interceptors
   "src/common/interceptors/logging.interceptor.ts"
   "src/common/interceptors/response.interceptor.ts"
   "src/common/interceptors/timeout.interceptor.ts"
 
-  # Common - interfaces
   "src/common/interfaces/api-key-payload.interface.ts"
   "src/common/interfaces/jwt-payload.interface.ts"
   "src/common/interfaces/pagination.interface.ts"
   "src/common/interfaces/response.interface.ts"
 
-  # Common - middlewares
   "src/common/middlewares/ip-whitelist.middleware.ts"
   "src/common/middlewares/logger.middleware.ts"
+  "src/common/middlewares/maintenance.middleware.ts"
 
-  # Common - pipes
   "src/common/pipes/parse-pagination.pipe.ts"
   "src/common/pipes/validation.pipe.ts"
 
-  # Common - utils
   "src/common/utils/csv-parser.util.ts"
   "src/common/utils/date.util.ts"
   "src/common/utils/hash.util.ts"
@@ -103,7 +88,6 @@ FILES=(
   "src/common/utils/placeholder.util.ts"
   "src/common/utils/token-generator.util.ts"
 
-  # Config
   "src/config/app.config.ts"
   "src/config/database.config.ts"
   "src/config/gemini.config.ts"
@@ -113,35 +97,29 @@ FILES=(
   "src/config/throttler.config.ts"
   "src/config/whatsapp.config.ts"
 
-  # Gateway
   "src/gateway/app.gateway.ts"
   "src/gateway/gateway.module.ts"
   "src/gateway/gateway.service.ts"
 
-  # Modules - ai
   "src/modules/ai/ai.module.ts"
   "src/modules/ai/ai.service.ts"
   "src/modules/ai/dto/ai-reply.dto.ts"
 
-  # Modules - analytics
   "src/modules/analytics/analytics.controller.ts"
   "src/modules/analytics/analytics.module.ts"
   "src/modules/analytics/analytics.service.ts"
   "src/modules/analytics/dto/query-analytics.dto.ts"
 
-  # Modules - api-keys
   "src/modules/api-keys/api-keys.controller.ts"
   "src/modules/api-keys/api-keys.module.ts"
   "src/modules/api-keys/api-keys.service.ts"
   "src/modules/api-keys/dto/create-api-key.dto.ts"
 
-  # Modules - audit
   "src/modules/audit/audit.controller.ts"
   "src/modules/audit/audit.module.ts"
   "src/modules/audit/audit.service.ts"
   "src/modules/audit/dto/query-audit.dto.ts"
 
-  # Modules - auth
   "src/modules/auth/auth.controller.ts"
   "src/modules/auth/auth.module.ts"
   "src/modules/auth/auth.service.ts"
@@ -152,7 +130,6 @@ FILES=(
   "src/modules/auth/strategies/google.strategy.ts"
   "src/modules/auth/strategies/jwt.strategy.ts"
 
-  # Modules - auto-reply
   "src/modules/auto-reply/auto-reply.controller.ts"
   "src/modules/auto-reply/auto-reply.engine.ts"
   "src/modules/auto-reply/auto-reply.module.ts"
@@ -161,7 +138,6 @@ FILES=(
   "src/modules/auto-reply/dto/toggle-auto-reply.dto.ts"
   "src/modules/auto-reply/dto/update-auto-reply.dto.ts"
 
-  # Modules - broadcast
   "src/modules/broadcast/broadcast.controller.ts"
   "src/modules/broadcast/broadcast.module.ts"
   "src/modules/broadcast/broadcast.service.ts"
@@ -169,13 +145,15 @@ FILES=(
   "src/modules/broadcast/dto/query-campaigns.dto.ts"
   "src/modules/broadcast/processors/broadcast.processor.ts"
 
-  # Modules - calls
+  "src/modules/broadcast-list/broadcast-list.controller.ts"
+  "src/modules/broadcast-list/broadcast-list.module.ts"
+  "src/modules/broadcast-list/broadcast-list.service.ts"
+
   "src/modules/calls/calls.controller.ts"
   "src/modules/calls/calls.module.ts"
   "src/modules/calls/calls.service.ts"
   "src/modules/calls/dto/query-calls.dto.ts"
 
-  # Modules - channels
   "src/modules/channels/channels.controller.ts"
   "src/modules/channels/channels.module.ts"
   "src/modules/channels/channels.service.ts"
@@ -184,18 +162,15 @@ FILES=(
   "src/modules/channels/dto/search-channel.dto.ts"
   "src/modules/channels/dto/update-channel.dto.ts"
 
-  # Modules - chats
   "src/modules/chats/chats.controller.ts"
   "src/modules/chats/chats.module.ts"
   "src/modules/chats/chats.service.ts"
   "src/modules/chats/dto/mute-chat.dto.ts"
   "src/modules/chats/dto/search-messages.dto.ts"
 
-  # Modules - cleanup
   "src/modules/cleanup/cleanup.module.ts"
   "src/modules/cleanup/cleanup.service.ts"
 
-  # Modules - contacts
   "src/modules/contacts/contacts.controller.ts"
   "src/modules/contacts/contacts.module.ts"
   "src/modules/contacts/contacts.service.ts"
@@ -206,7 +181,11 @@ FILES=(
   "src/modules/contacts/dto/query-contacts.dto.ts"
   "src/modules/contacts/dto/update-contact.dto.ts"
 
-  # Modules - drip
+  "src/modules/customer-note/customer-note.controller.ts"
+  "src/modules/customer-note/customer-note.module.ts"
+  "src/modules/customer-note/customer-note.service.ts"
+  "src/modules/customer-note/dto/upsert-note.dto.ts"
+
   "src/modules/drip/drip.controller.ts"
   "src/modules/drip/drip.manager.ts"
   "src/modules/drip/drip.module.ts"
@@ -217,7 +196,6 @@ FILES=(
   "src/modules/drip/dto/toggle-drip.dto.ts"
   "src/modules/drip/dto/update-drip.dto.ts"
 
-  # Modules - groups
   "src/modules/groups/dto/create-group.dto.ts"
   "src/modules/groups/dto/manage-admins.dto.ts"
   "src/modules/groups/dto/manage-members.dto.ts"
@@ -227,44 +205,50 @@ FILES=(
   "src/modules/groups/groups.module.ts"
   "src/modules/groups/groups.service.ts"
 
-  # Modules - health
   "src/modules/health/health.controller.ts"
   "src/modules/health/health.module.ts"
   "src/modules/health/health.service.ts"
 
-  # Modules - inbox
   "src/modules/inbox/dto/query-inbox.dto.ts"
   "src/modules/inbox/dto/reply-inbox.dto.ts"
   "src/modules/inbox/inbox.controller.ts"
   "src/modules/inbox/inbox.module.ts"
   "src/modules/inbox/inbox.service.ts"
 
-  # Modules - labels
   "src/modules/labels/dto/assign-label.dto.ts"
   "src/modules/labels/dto/create-label.dto.ts"
   "src/modules/labels/labels.controller.ts"
   "src/modules/labels/labels.module.ts"
   "src/modules/labels/labels.service.ts"
 
-  # Modules - messages
   "src/modules/messages/dto/query-messages.dto.ts"
   "src/modules/messages/dto/react-message.dto.ts"
   "src/modules/messages/dto/send-contact.dto.ts"
+  "src/modules/messages/dto/send-live-location.dto.ts"
   "src/modules/messages/dto/send-location.dto.ts"
   "src/modules/messages/dto/send-media.dto.ts"
   "src/modules/messages/dto/send-message.dto.ts"
   "src/modules/messages/dto/send-poll.dto.ts"
+  "src/modules/messages/dto/send-voice-note.dto.ts"
   "src/modules/messages/messages.controller.ts"
   "src/modules/messages/messages.module.ts"
   "src/modules/messages/messages.service.ts"
 
-  # Modules - notifications
   "src/modules/notifications/dto/send-notification.dto.ts"
   "src/modules/notifications/email.service.ts"
   "src/modules/notifications/notifications.module.ts"
   "src/modules/notifications/notifications.service.ts"
 
-  # Modules - scheduler
+  "src/modules/profile/profile.controller.ts"
+  "src/modules/profile/profile.module.ts"
+  "src/modules/profile/profile.service.ts"
+
+  "src/modules/scheduled-event/dto/create-scheduled-event.dto.ts"
+  "src/modules/scheduled-event/dto/respond-event.dto.ts"
+  "src/modules/scheduled-event/scheduled-event.controller.ts"
+  "src/modules/scheduled-event/scheduled-event.module.ts"
+  "src/modules/scheduled-event/scheduled-event.service.ts"
+
   "src/modules/scheduler/dto/create-scheduled-message.dto.ts"
   "src/modules/scheduler/dto/query-scheduled-messages.dto.ts"
   "src/modules/scheduler/scheduler.controller.ts"
@@ -272,7 +256,6 @@ FILES=(
   "src/modules/scheduler/scheduler.processor.ts"
   "src/modules/scheduler/scheduler.service.ts"
 
-  # Modules - sessions
   "src/modules/sessions/dto/create-session.dto.ts"
   "src/modules/sessions/dto/switch-session.dto.ts"
   "src/modules/sessions/session-manager.service.ts"
@@ -281,20 +264,17 @@ FILES=(
   "src/modules/sessions/sessions.service.ts"
   "src/modules/sessions/warming.service.ts"
 
-  # Modules - settings
   "src/modules/settings/dto/update-global-settings.dto.ts"
   "src/modules/settings/dto/update-settings.dto.ts"
   "src/modules/settings/settings.controller.ts"
   "src/modules/settings/settings.module.ts"
   "src/modules/settings/settings.service.ts"
 
-  # Modules - status
   "src/modules/status/dto/send-status.dto.ts"
   "src/modules/status/status.controller.ts"
   "src/modules/status/status.module.ts"
   "src/modules/status/status.service.ts"
 
-  # Modules - templates
   "src/modules/templates/dto/create-template.dto.ts"
   "src/modules/templates/dto/query-templates.dto.ts"
   "src/modules/templates/dto/update-template.dto.ts"
@@ -302,7 +282,6 @@ FILES=(
   "src/modules/templates/templates.module.ts"
   "src/modules/templates/templates.service.ts"
 
-  # Modules - tiers
   "src/modules/tiers/dto/assign-tier.dto.ts"
   "src/modules/tiers/dto/create-tier.dto.ts"
   "src/modules/tiers/dto/update-tier.dto.ts"
@@ -310,7 +289,6 @@ FILES=(
   "src/modules/tiers/tiers.module.ts"
   "src/modules/tiers/tiers.service.ts"
 
-  # Modules - users
   "src/modules/users/dto/query-users.dto.ts"
   "src/modules/users/dto/update-profile.dto.ts"
   "src/modules/users/dto/update-quota.dto.ts"
@@ -319,14 +297,12 @@ FILES=(
   "src/modules/users/users.module.ts"
   "src/modules/users/users.service.ts"
 
-  # Modules - webhook
   "src/modules/webhook/dto/update-webhook.dto.ts"
   "src/modules/webhook/processors/webhook.processor.ts"
   "src/modules/webhook/webhook.controller.ts"
   "src/modules/webhook/webhook.module.ts"
   "src/modules/webhook/webhook.service.ts"
 
-  # Modules - workflow
   "src/modules/workflow/dto/create-workflow.dto.ts"
   "src/modules/workflow/dto/toggle-workflow.dto.ts"
   "src/modules/workflow/dto/update-workflow.dto.ts"
@@ -336,7 +312,6 @@ FILES=(
   "src/modules/workflow/workflow.module.ts"
   "src/modules/workflow/workflow.service.ts"
 
-  # Modules - workspace
   "src/modules/workspace/dto/create-workspace.dto.ts"
   "src/modules/workspace/dto/invite-member.dto.ts"
   "src/modules/workspace/dto/update-member-permission.dto.ts"
@@ -344,36 +319,46 @@ FILES=(
   "src/modules/workspace/workspace.module.ts"
   "src/modules/workspace/workspace.service.ts"
 
-  # Prisma service
   "src/prisma/prisma.module.ts"
   "src/prisma/prisma.service.ts"
 
-  # Queue & Redis
   "src/queue/queue.module.ts"
+
   "src/redis/redis.module.ts"
   "src/redis/redis.service.ts"
 
-  # Tests - mocks
   "test/mocks/prisma.mock.ts"
   "test/mocks/redis.mock.ts"
   "test/mocks/whatsapp.mock.ts"
 
-  # Tests - unit
   "test/unit/auth/auth.service.spec.ts"
   "test/unit/auto-reply/auto-reply.engine.spec.ts"
+  "test/unit/broadcast/broadcast.processor.spec.ts"
   "test/unit/broadcast/broadcast.service.spec.ts"
+  "test/unit/broadcast-list/broadcast-list.service.spec.ts"
+  "test/unit/contacts/contacts.service.spec.ts"
+  "test/unit/customer-note/customer-note.service.spec.ts"
+  "test/unit/drip/drip.manager.spec.ts"
+  "test/unit/groups/groups.service.spec.ts"
   "test/unit/messages/messages.service.spec.ts"
+  "test/unit/middlewares/maintenance.middleware.spec.ts"
+  "test/unit/profile/profile.service.spec.ts"
+  "test/unit/scheduled-event/scheduled-event.service.spec.ts"
+  "test/unit/scheduler/scheduler.service.spec.ts"
   "test/unit/sessions/session-manager.service.spec.ts"
   "test/unit/sessions/sessions.service.spec.ts"
+  "test/unit/settings/settings.service.spec.ts"
   "test/unit/utils/hash.util.spec.ts"
   "test/unit/utils/mime-validator.spec.ts"
   "test/unit/utils/phone-normalizer.spec.ts"
+  "test/unit/webhook/webhook.processor.spec.ts"
   "test/unit/workflow/workflow.engine.spec.ts"
+  "test/unit/workspace/workspace.service.spec.ts"
 
-  # Tests - integration & e2e
   "test/app.e2e-spec.ts"
   "test/integration/auth.integration.spec.ts"
   "test/integration/messages.integration.spec.ts"
+  "test/integration/profile.integration.spec.ts"
   "test/integration/sessions.integration.spec.ts"
 )
 
@@ -399,6 +384,6 @@ for FILE in "${FILES[@]}"; do
 done
 
 echo ""
-echo "✅ blueprint.md berhasil dibuat!"
+echo "blueprint.md berhasil dibuat!"
 echo "   $FOUND file berhasil diproses"
 echo "   $SKIPPED file dilewati (tidak ditemukan)"
