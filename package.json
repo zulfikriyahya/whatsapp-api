@@ -27,7 +27,8 @@
     "prisma:migrate:prod": "prisma migrate deploy",
     "prisma:seed": "ts-node prisma/seed.ts",
     "prisma:studio": "prisma studio",
-    "storage:init": "mkdir -p storage/sessions storage/uploads storage/exports storage/broadcasts/tmp"
+    "storage:init": "mkdir -p storage/sessions storage/uploads storage/exports storage/broadcasts/tmp",
+    "postinstall": "prisma generate"
   },
   "dependencies": {
     "@google/generative-ai": "^0.21.0",

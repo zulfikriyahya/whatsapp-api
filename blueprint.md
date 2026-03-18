@@ -2854,11 +2854,31 @@ export class AppGateway
 ## File : `src/gateway/gateway.module.ts`
 
 ```ts
+// import { Module } from "@nestjs/common";
+// import { AppGateway } from "./app.gateway";
+// import { GatewayService } from "./gateway.service";
+
+// @Module({
+//   providers: [AppGateway, GatewayService],
+//   exports: [GatewayService],
+// })
+// export class GatewayModule {}
 import { Module } from "@nestjs/common";
+import { JwtModule } from "@nestjs/jwt";
+import { ConfigService } from "@nestjs/config";
 import { AppGateway } from "./app.gateway";
 import { GatewayService } from "./gateway.service";
 
 @Module({
+  imports: [
+    JwtModule.registerAsync({
+      inject: [ConfigService],
+      useFactory: (cfg: ConfigService) => ({
+        secret: cfg.get("jwt.secret"),
+        signOptions: { expiresIn: cfg.get("jwt.expiresIn") },
+      }),
+    }),
+  ],
   providers: [AppGateway, GatewayService],
   exports: [GatewayService],
 })
@@ -3095,11 +3115,26 @@ export class AnalyticsController {
 ## File : `src/modules/analytics/analytics.module.ts`
 
 ```ts
+// import { Module } from "@nestjs/common";
+// import { AnalyticsController } from "./analytics.controller";
+// import { AnalyticsService } from "./analytics.service";
+
+// @Module({ controllers: [AnalyticsController], providers: [AnalyticsService] })
+// export class AnalyticsModule {}
 import { Module } from "@nestjs/common";
+import { BullModule } from "@nestjs/bullmq";
 import { AnalyticsController } from "./analytics.controller";
 import { AnalyticsService } from "./analytics.service";
+import { QueueNames } from "../../common/constants/queue-names.constant";
 
-@Module({ controllers: [AnalyticsController], providers: [AnalyticsService] })
+@Module({
+  imports: [
+    BullModule.registerQueue({ name: QueueNames.BROADCAST }),
+    BullModule.registerQueue({ name: QueueNames.WEBHOOK }),
+  ],
+  controllers: [AnalyticsController],
+  providers: [AnalyticsService],
+})
 export class AnalyticsModule {}
 
 ```
@@ -4312,7 +4347,79 @@ export class AutoReplyController {
 ## File : `src/modules/auto-reply/auto-reply.engine.ts`
 
 ```ts
-import { Injectable, Logger } from "@nestjs/common";
+// import { Injectable, Logger } from "@nestjs/common";
+// import { PrismaService } from "../../prisma/prisma.service";
+// import { AiService } from "../ai/ai.service";
+// import { SessionManagerService } from "../sessions/session-manager.service";
+// import { toJid } from "../../common/utils/phone-normalizer.util";
+// import { MatchType } from "@prisma/client";
+
+// @Injectable()
+// export class AutoReplyEngine {
+//   private logger = new Logger("AutoReplyEngine");
+
+//   constructor(
+//     private prisma: PrismaService,
+//     private ai: AiService,
+//     private manager: SessionManagerService,
+//   ) {}
+
+//   async process(userId: string, sessionId: string, from: string, text: string) {
+//     if (!text?.trim()) return;
+
+//     const rules = await this.prisma.autoReply.findMany({
+//       where: { userId, isActive: true },
+//       orderBy: [{ priority: "asc" }],
+//     });
+
+//     for (const rule of rules) {
+//       const matched = this.matches(rule.matchType, rule.keyword, text);
+//       if (!matched) continue;
+
+//       let reply: string | null = null;
+
+//       if (rule.matchType === MatchType.ai_smart) {
+//         reply = await this.ai.getReply(userId, text, rule.response);
+//       } else {
+//         reply = rule.response;
+//       }
+
+//       if (!reply) continue;
+
+//       try {
+//         const jid = from.includes("@") ? from : toJid(from);
+//         await this.manager.sendMessage(sessionId, jid, reply);
+//         this.logger.debug(`Auto-reply sent to ${from} via rule ${rule.id}`);
+//       } catch (e) {
+//         this.logger.error(`Auto-reply send failed: ${e.message}`);
+//       }
+//       break; // Only one rule fires
+//     }
+//   }
+
+//   private matches(type: MatchType, keyword: string, text: string): boolean {
+//     const t = text.toLowerCase().trim();
+//     const k = keyword.toLowerCase().trim();
+//     switch (type) {
+//       case MatchType.exact:
+//         return t === k;
+//       case MatchType.contains:
+//         return t.includes(k);
+//       case MatchType.regex:
+//         try {
+//           return new RegExp(keyword, "i").test(text);
+//         } catch {
+//           return false;
+//         }
+//       case MatchType.ai_smart:
+//         return true; // Always try AI
+//       default:
+//         return false;
+//     }
+//   }
+// }
+
+import { Injectable, Logger, Inject, forwardRef } from "@nestjs/common";
 import { PrismaService } from "../../prisma/prisma.service";
 import { AiService } from "../ai/ai.service";
 import { SessionManagerService } from "../sessions/session-manager.service";
@@ -4326,6 +4433,7 @@ export class AutoReplyEngine {
   constructor(
     private prisma: PrismaService,
     private ai: AiService,
+    @Inject(forwardRef(() => SessionManagerService))
     private manager: SessionManagerService,
   ) {}
 
@@ -4358,7 +4466,7 @@ export class AutoReplyEngine {
       } catch (e) {
         this.logger.error(`Auto-reply send failed: ${e.message}`);
       }
-      break; // Only one rule fires
+      break;
     }
   }
 
@@ -4377,7 +4485,7 @@ export class AutoReplyEngine {
           return false;
         }
       case MatchType.ai_smart:
-        return true; // Always try AI
+        return true;
       default:
         return false;
     }
@@ -4390,14 +4498,29 @@ export class AutoReplyEngine {
 ## File : `src/modules/auto-reply/auto-reply.module.ts`
 
 ```ts
-import { Module } from "@nestjs/common";
+// import { Module } from "@nestjs/common";
+// import { AutoReplyController } from "./auto-reply.controller";
+// import { AutoReplyService } from "./auto-reply.service";
+// import { AutoReplyEngine } from "./auto-reply.engine";
+// import { AiModule } from "../ai/ai.module";
+
+// @Module({
+//   imports: [AiModule],
+//   controllers: [AutoReplyController],
+//   providers: [AutoReplyService, AutoReplyEngine],
+//   exports: [AutoReplyEngine],
+// })
+// export class AutoReplyModule {}
+
+import { Module, forwardRef } from "@nestjs/common";
 import { AutoReplyController } from "./auto-reply.controller";
 import { AutoReplyService } from "./auto-reply.service";
 import { AutoReplyEngine } from "./auto-reply.engine";
 import { AiModule } from "../ai/ai.module";
+import { SessionsModule } from "../sessions/sessions.module";
 
 @Module({
-  imports: [AiModule],
+  imports: [AiModule, forwardRef(() => SessionsModule)],
   controllers: [AutoReplyController],
   providers: [AutoReplyService, AutoReplyEngine],
   exports: [AutoReplyEngine],
@@ -8848,11 +8971,22 @@ export class EmailService {
 ## File : `src/modules/notifications/notifications.module.ts`
 
 ```ts
+// import { Module } from "@nestjs/common";
+// import { NotificationsService } from "./notifications.service";
+// import { EmailService } from "./email.service";
+
+// @Module({
+//   providers: [NotificationsService, EmailService],
+//   exports: [NotificationsService],
+// })
+// export class NotificationsModule {}
 import { Module } from "@nestjs/common";
 import { NotificationsService } from "./notifications.service";
 import { EmailService } from "./email.service";
+import { GatewayModule } from "../../gateway/gateway.module";
 
 @Module({
+  imports: [GatewayModule],
   providers: [NotificationsService, EmailService],
   exports: [NotificationsService],
 })
@@ -8925,6 +9059,28 @@ export class NotificationsService {
       "API key Gemini tidak valid, AI Smart Reply dinonaktifkan.",
     );
   }
+}
+
+```
+---
+
+## File : `src/modules/profile/dto/update-profile-wa.dto.ts`
+
+```ts
+import { IsString, IsOptional, IsNotEmpty } from 'class-validator';
+import { ApiPropertyOptional } from '@nestjs/swagger';
+
+export class UpdateProfileWaDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  displayName?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  status?: string;
 }
 
 ```
@@ -9693,6 +9849,8 @@ import {
   Logger,
   OnModuleInit,
   OnModuleDestroy,
+  Inject,
+  forwardRef,
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../../prisma/prisma.service";
@@ -9709,12 +9867,23 @@ import { SessionStatus } from "@prisma/client";
 import { NotFoundException, BadRequestException } from "@nestjs/common";
 import { Client, LocalAuth, Message, MessageMedia } from "whatsapp-web.js";
 import * as path from "path";
-
 @Injectable()
 export class SessionManagerService implements OnModuleInit, OnModuleDestroy {
   private logger = new Logger("SessionManagerService");
   private clients = new Map<string, Client>();
   private reconnectTimers = new Map<string, NodeJS.Timeout>();
+
+  // constructor(
+  //   private prisma: PrismaService,
+  //   private redis: RedisService,
+  //   private gateway: GatewayService,
+  //   private notifications: NotificationsService,
+  //   private inbox: InboxService,
+  //   private autoReply: AutoReplyEngine,
+  //   private workflow: WorkflowEngine,
+  //   private webhook: WebhookService,
+  //   private cfg: ConfigService,
+  // ) {}
 
   constructor(
     private prisma: PrismaService,
@@ -9722,7 +9891,9 @@ export class SessionManagerService implements OnModuleInit, OnModuleDestroy {
     private gateway: GatewayService,
     private notifications: NotificationsService,
     private inbox: InboxService,
+    @Inject(forwardRef(() => AutoReplyEngine))
     private autoReply: AutoReplyEngine,
+    @Inject(forwardRef(() => WorkflowEngine))
     private workflow: WorkflowEngine,
     private webhook: WebhookService,
     private cfg: ConfigService,
@@ -10120,7 +10291,35 @@ export class SessionsController {
 ## File : `src/modules/sessions/sessions.module.ts`
 
 ```ts
-import { Module } from "@nestjs/common";
+// import { Module } from "@nestjs/common";
+// import { SessionsController } from "./sessions.controller";
+// import { SessionsService } from "./sessions.service";
+// import { SessionManagerService } from "./session-manager.service";
+// import { WarmingService } from "./warming.service";
+// import { AuditModule } from "../audit/audit.module";
+// import { GatewayModule } from "../../gateway/gateway.module";
+// import { NotificationsModule } from "../notifications/notifications.module";
+// import { InboxModule } from "../inbox/inbox.module";
+// import { AutoReplyModule } from "../auto-reply/auto-reply.module";
+// import { WorkflowModule } from "../workflow/workflow.module";
+// import { WebhookModule } from "../webhook/webhook.module";
+
+// @Module({
+//   imports: [
+//     AuditModule,
+//     GatewayModule,
+//     NotificationsModule,
+//     InboxModule,
+//     AutoReplyModule,
+//     WorkflowModule,
+//     WebhookModule,
+//   ],
+//   controllers: [SessionsController],
+//   providers: [SessionsService, SessionManagerService, WarmingService],
+//   exports: [SessionManagerService, SessionsService],
+// })
+// export class SessionsModule {}
+import { Module, forwardRef } from "@nestjs/common";
 import { SessionsController } from "./sessions.controller";
 import { SessionsService } from "./sessions.service";
 import { SessionManagerService } from "./session-manager.service";
@@ -10139,8 +10338,8 @@ import { WebhookModule } from "../webhook/webhook.module";
     GatewayModule,
     NotificationsModule,
     InboxModule,
-    AutoReplyModule,
-    WorkflowModule,
+    forwardRef(() => AutoReplyModule),
+    forwardRef(() => WorkflowModule),
     WebhookModule,
   ],
   controllers: [SessionsController],
@@ -11971,7 +12170,137 @@ export class WorkflowController {
 ## File : `src/modules/workflow/workflow.engine.ts`
 
 ```ts
-import { Injectable, Logger } from "@nestjs/common";
+// import { Injectable, Logger } from "@nestjs/common";
+// import { PrismaService } from "../../prisma/prisma.service";
+// import { SessionManagerService } from "../sessions/session-manager.service";
+// import { WorkflowService } from "./workflow.service";
+// import { toJid } from "../../common/utils/phone-normalizer.util";
+
+// type NodeType = "send_message" | "delay" | "add_tag";
+// interface WorkflowNode {
+//   id: string;
+//   type: NodeType;
+//   config: any;
+// }
+
+// @Injectable()
+// export class WorkflowEngine {
+//   private logger = new Logger("WorkflowEngine");
+
+//   constructor(
+//     private prisma: PrismaService,
+//     private manager: SessionManagerService,
+//     private workflowService: WorkflowService,
+//   ) {}
+
+//   async process(userId: string, sessionId: string, from: string, text: string) {
+//     const workflows = await this.workflowService.getActive(userId);
+
+//     for (const wf of workflows) {
+//       const condition = wf.triggerCondition as any;
+//       if (!this.matchesTrigger(condition, text)) continue;
+
+//       const logs: string[] = [];
+//       let status = "completed";
+//       let errorMessage: string | null = null;
+
+//       try {
+//         const nodes = wf.nodes as WorkflowNode[];
+//         for (const node of nodes) {
+//           await this.executeNode(node, sessionId, userId, from, logs);
+//         }
+//       } catch (e) {
+//         status = "failed";
+//         errorMessage = e.message;
+//         this.logger.error(`Workflow ${wf.id} failed: ${e.message}`);
+//       }
+
+//       await this.prisma.workflowLog.create({
+//         data: {
+//           workflowId: wf.id,
+//           userId,
+//           contactNumber: from,
+//           status,
+//           logs,
+//           errorMessage,
+//         },
+//       });
+//       await this.prisma.workflow.update({
+//         where: { id: wf.id },
+//         data: { executionCount: { increment: 1 } },
+//       });
+//       break; // One workflow per message
+//     }
+//   }
+
+//   private async executeNode(
+//     node: WorkflowNode,
+//     sessionId: string,
+//     userId: string,
+//     from: string,
+//     logs: string[],
+//   ) {
+//     const jid = from.includes("@") ? from : toJid(from);
+
+//     switch (node.type) {
+//       case "send_message":
+//         await this.manager.sendMessage(sessionId, jid, node.config.message);
+//         logs.push(`[send_message] Sent: "${node.config.message.slice(0, 50)}"`);
+//         break;
+
+//       case "delay":
+//         const ms = (node.config.seconds || 1) * 1000;
+//         await new Promise((r) => setTimeout(r, ms));
+//         logs.push(`[delay] Waited ${node.config.seconds}s`);
+//         break;
+
+//       case "add_tag":
+//         const phone = from.split("@")[0];
+//         const contact = await this.prisma.contact.findFirst({
+//           where: { userId, number: phone },
+//         });
+//         if (contact) {
+//           await this.prisma.contact.update({
+//             where: { id: contact.id },
+//             data: { tag: node.config.tag },
+//           });
+//         } else {
+//           await this.prisma.contact.create({
+//             data: { userId, name: phone, number: phone, tag: node.config.tag },
+//           });
+//         }
+//         logs.push(
+//           `[add_tag] Tagged contact ${phone} with "${node.config.tag}"`,
+//         );
+//         break;
+
+//       default:
+//         throw new Error(`Unknown node type: ${(node as any).type}`);
+//     }
+//   }
+
+//   private matchesTrigger(condition: any, text: string): boolean {
+//     if (!condition?.keyword) return false;
+//     const t = text.toLowerCase().trim();
+//     const k = condition.keyword.toLowerCase().trim();
+//     switch (condition.matchType) {
+//       case "exact":
+//         return t === k;
+//       case "contains":
+//         return t.includes(k);
+//       case "regex":
+//         try {
+//           return new RegExp(condition.keyword, "i").test(text);
+//         } catch {
+//           return false;
+//         }
+//       default:
+//         return false;
+//     }
+//   }
+// }
+
+import { Injectable, Logger, Inject, forwardRef } from "@nestjs/common";
 import { PrismaService } from "../../prisma/prisma.service";
 import { SessionManagerService } from "../sessions/session-manager.service";
 import { WorkflowService } from "./workflow.service";
@@ -11990,6 +12319,7 @@ export class WorkflowEngine {
 
   constructor(
     private prisma: PrismaService,
+    @Inject(forwardRef(() => SessionManagerService))
     private manager: SessionManagerService,
     private workflowService: WorkflowService,
   ) {}
@@ -12030,7 +12360,7 @@ export class WorkflowEngine {
         where: { id: wf.id },
         data: { executionCount: { increment: 1 } },
       });
-      break; // One workflow per message
+      break;
     }
   }
 
@@ -12048,13 +12378,11 @@ export class WorkflowEngine {
         await this.manager.sendMessage(sessionId, jid, node.config.message);
         logs.push(`[send_message] Sent: "${node.config.message.slice(0, 50)}"`);
         break;
-
       case "delay":
         const ms = (node.config.seconds || 1) * 1000;
         await new Promise((r) => setTimeout(r, ms));
         logs.push(`[delay] Waited ${node.config.seconds}s`);
         break;
-
       case "add_tag":
         const phone = from.split("@")[0];
         const contact = await this.prisma.contact.findFirst({
@@ -12074,7 +12402,6 @@ export class WorkflowEngine {
           `[add_tag] Tagged contact ${phone} with "${node.config.tag}"`,
         );
         break;
-
       default:
         throw new Error(`Unknown node type: ${(node as any).type}`);
     }
@@ -12107,17 +12434,31 @@ export class WorkflowEngine {
 ## File : `src/modules/workflow/workflow.module.ts`
 
 ```ts
-import { Module } from "@nestjs/common";
+// import { Module } from "@nestjs/common";
+// import { WorkflowController } from "./workflow.controller";
+// import { WorkflowService } from "./workflow.service";
+// import { WorkflowEngine } from "./workflow.engine";
+// import { SessionsModule } from "../sessions/sessions.module";
+
+// @Module({
+//   imports: [SessionsModule],
+//   controllers: [WorkflowController],
+//   providers: [WorkflowService, WorkflowEngine],
+//   exports: [WorkflowEngine],
+// })
+// export class WorkflowModule {}
+
+import { Module, forwardRef } from "@nestjs/common";
 import { WorkflowController } from "./workflow.controller";
 import { WorkflowService } from "./workflow.service";
 import { WorkflowEngine } from "./workflow.engine";
 import { SessionsModule } from "../sessions/sessions.module";
 
 @Module({
-  imports: [SessionsModule],
+  imports: [forwardRef(() => SessionsModule)],
   controllers: [WorkflowController],
   providers: [WorkflowService, WorkflowEngine],
-  exports: [WorkflowEngine],
+  exports: [WorkflowEngine, WorkflowService],
 })
 export class WorkflowModule {}
 
@@ -12738,3332 +13079,6 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     return this.client.keys(pattern);
   }
 }
-
-```
----
-
-## File : `test/mocks/prisma.mock.ts`
-
-```ts
-export const mockPrismaService = {
-  user: {
-    findUnique: jest.fn(),
-    findFirst: jest.fn(),
-    findMany: jest.fn(),
-    create: jest.fn(),
-    update: jest.fn(),
-    updateMany: jest.fn(),
-    delete: jest.fn(),
-    count: jest.fn(),
-  },
-  userQuota: {
-    findUnique: jest.fn(),
-    create: jest.fn(),
-    update: jest.fn(),
-    updateMany: jest.fn(),
-    upsert: jest.fn(),
-  },
-  userTier: {
-    findUnique: jest.fn(),
-    upsert: jest.fn(),
-  },
-  tier: {
-    findUnique: jest.fn(),
-    findMany: jest.fn(),
-    create: jest.fn(),
-    update: jest.fn(),
-    delete: jest.fn(),
-  },
-  whatsappSession: {
-    findUnique: jest.fn(),
-    findFirst: jest.fn(),
-    findMany: jest.fn(),
-    create: jest.fn(),
-    update: jest.fn(),
-    updateMany: jest.fn(),
-    delete: jest.fn(),
-    count: jest.fn(),
-  },
-  apiKey: {
-    findUnique: jest.fn(),
-    findFirst: jest.fn(),
-    findMany: jest.fn(),
-    create: jest.fn(),
-    update: jest.fn(),
-    delete: jest.fn(),
-  },
-  messageLog: {
-    findMany: jest.fn(),
-    create: jest.fn(),
-    count: jest.fn(),
-    deleteMany: jest.fn(),
-  },
-  inbox: {
-    findFirst: jest.fn(),
-    findMany: jest.fn(),
-    create: jest.fn(),
-    update: jest.fn(),
-    updateMany: jest.fn(),
-    upsert: jest.fn(),
-    count: jest.fn(),
-  },
-  campaign: {
-    findUnique: jest.fn(),
-    findFirst: jest.fn(),
-    findMany: jest.fn(),
-    create: jest.fn(),
-    update: jest.fn(),
-    count: jest.fn(),
-  },
-  contact: {
-    findFirst: jest.fn(),
-    findMany: jest.fn(),
-    create: jest.fn(),
-    update: jest.fn(),
-    delete: jest.fn(),
-    deleteMany: jest.fn(),
-    upsert: jest.fn(),
-    count: jest.fn(),
-  },
-  autoReply: {
-    findMany: jest.fn(),
-    findFirst: jest.fn(),
-    create: jest.fn(),
-    update: jest.fn(),
-    delete: jest.fn(),
-  },
-  workflow: {
-    findFirst: jest.fn(),
-    findMany: jest.fn(),
-    create: jest.fn(),
-    update: jest.fn(),
-    delete: jest.fn(),
-  },
-  workflowLog: {
-    create: jest.fn(),
-    findMany: jest.fn(),
-    deleteMany: jest.fn(),
-  },
-  dripCampaign: {
-    findFirst: jest.fn(),
-    findMany: jest.fn(),
-    create: jest.fn(),
-    update: jest.fn(),
-    delete: jest.fn(),
-  },
-  dripStep: {
-    createMany: jest.fn(),
-    deleteMany: jest.fn(),
-  },
-  dripSubscription: {
-    findMany: jest.fn(),
-    findFirst: jest.fn(),
-    create: jest.fn(),
-    update: jest.fn(),
-    upsert: jest.fn(),
-    count: jest.fn(),
-  },
-  scheduledMessage: {
-    findFirst: jest.fn(),
-    findMany: jest.fn(),
-    create: jest.fn(),
-    update: jest.fn(),
-    delete: jest.fn(),
-    count: jest.fn(),
-  },
-  template: {
-    findFirst: jest.fn(),
-    findMany: jest.fn(),
-    create: jest.fn(),
-    update: jest.fn(),
-    delete: jest.fn(),
-  },
-  webhookConfig: {
-    findUnique: jest.fn(),
-    upsert: jest.fn(),
-  },
-  webhookQueue: {
-    create: jest.fn(),
-    findMany: jest.fn(),
-    deleteMany: jest.fn(),
-  },
-  auditLog: {
-    create: jest.fn(),
-    findMany: jest.fn(),
-    count: jest.fn(),
-    deleteMany: jest.fn(),
-  },
-  globalSetting: {
-    findUnique: jest.fn(),
-    findMany: jest.fn(),
-    upsert: jest.fn(),
-  },
-  userSetting: {
-    findUnique: jest.fn(),
-    upsert: jest.fn(),
-    update: jest.fn(),
-  },
-  callLog: {
-    findMany: jest.fn(),
-    count: jest.fn(),
-  },
-  workspace: {
-    findFirst: jest.fn(),
-    findMany: jest.fn(),
-    create: jest.fn(),
-  },
-  workspaceMember: {
-    upsert: jest.fn(),
-    updateMany: jest.fn(),
-    deleteMany: jest.fn(),
-  },
-  $transaction: jest.fn((cb) => cb(mockPrismaService)),
-  $queryRaw: jest.fn(),
-  $connect: jest.fn(),
-  $disconnect: jest.fn(),
-};
-
-```
----
-
-## File : `test/mocks/redis.mock.ts`
-
-```ts
-export const mockRedisService = {
-  get: jest.fn(),
-  set: jest.fn(),
-  del: jest.fn(),
-  incr: jest.fn(),
-  expire: jest.fn(),
-  exists: jest.fn(),
-  keys: jest.fn(),
-  getClient: jest.fn().mockReturnValue({
-    ping: jest.fn().mockResolvedValue("PONG"),
-    info: jest.fn().mockResolvedValue("used_memory:1024"),
-    get: jest.fn(),
-    set: jest.fn(),
-    del: jest.fn(),
-    incr: jest.fn(),
-    expire: jest.fn(),
-  }),
-};
-
-```
----
-
-## File : `test/mocks/whatsapp.mock.ts`
-
-```ts
-export const mockWhatsappClient = {
-  initialize: jest.fn().mockResolvedValue(undefined),
-  destroy: jest.fn().mockResolvedValue(undefined),
-  sendMessage: jest
-    .fn()
-    .mockResolvedValue({ id: { _serialized: 'mock-msg-id' } }),
-  sendPresenceAvailable: jest.fn().mockResolvedValue(undefined),
-  sendPresenceUnavailable: jest.fn().mockResolvedValue(undefined),
-  getState: jest.fn().mockResolvedValue('CONNECTED'),
-  getWWebVersion: jest.fn().mockResolvedValue('2.2000.0'),
-  isRegisteredUser: jest.fn().mockResolvedValue(true),
-  getChats: jest.fn().mockResolvedValue([]),
-  getChatById: jest.fn().mockResolvedValue({
-    id: { _serialized: 'mock-chat' },
-    archive: jest.fn().mockResolvedValue(undefined),
-    unarchive: jest.fn().mockResolvedValue(undefined),
-    mute: jest.fn().mockResolvedValue(undefined),
-    unmute: jest.fn().mockResolvedValue(undefined),
-    pin: jest.fn().mockResolvedValue(undefined),
-    unpin: jest.fn().mockResolvedValue(undefined),
-    delete: jest.fn().mockResolvedValue(undefined),
-    sendSeen: jest.fn().mockResolvedValue(undefined),
-    addParticipants: jest.fn().mockResolvedValue(undefined),
-    removeParticipants: jest.fn().mockResolvedValue(undefined),
-    promoteParticipants: jest.fn().mockResolvedValue(undefined),
-    demoteParticipants: jest.fn().mockResolvedValue(undefined),
-    setSubject: jest.fn().mockResolvedValue(undefined),
-    setDescription: jest.fn().mockResolvedValue(undefined),
-    leave: jest.fn().mockResolvedValue(undefined),
-    getInviteCode: jest.fn().mockResolvedValue('abc123'),
-    revokeInvite: jest.fn().mockResolvedValue(undefined),
-    approveGroupMembershipRequests: jest.fn().mockResolvedValue(undefined),
-    rejectGroupMembershipRequests: jest.fn().mockResolvedValue(undefined),
-    getGroupMembershipRequests: jest.fn().mockResolvedValue([]),
-  }),
-  getMessageById: jest.fn().mockResolvedValue({
-    id: { _serialized: 'mock-msg-id' },
-    hasMedia: true,
-    delete: jest.fn().mockResolvedValue(undefined),
-    react: jest.fn().mockResolvedValue(undefined),
-    edit: jest.fn().mockResolvedValue({ id: { _serialized: 'mock-msg-id' } }),
-    forward: jest.fn().mockResolvedValue(undefined),
-    pin: jest.fn().mockResolvedValue(undefined),
-    unpin: jest.fn().mockResolvedValue(undefined),
-    star: jest.fn().mockResolvedValue(undefined),
-    downloadMedia: jest.fn().mockResolvedValue({
-      mimetype: 'image/jpeg',
-      data: Buffer.from('fake').toString('base64'),
-      filename: 'test.jpg',
-    }),
-  }),
-  searchMessages: jest.fn().mockResolvedValue([]),
-  createGroup: jest
-    .fn()
-    .mockResolvedValue({ gid: { _serialized: 'mock-group@g.us' } }),
-  acceptInvite: jest.fn().mockResolvedValue(undefined),
-  getInviteInfo: jest.fn().mockResolvedValue({}),
-  requestPairingCode: jest.fn().mockResolvedValue('123-456'),
-  getContacts: jest.fn().mockResolvedValue([]),
-  getContactById: jest.fn().mockResolvedValue({
-    id: { _serialized: '628123@s.whatsapp.net' },
-    block: jest.fn().mockResolvedValue(undefined),
-    unblock: jest.fn().mockResolvedValue(undefined),
-  }),
-  getProfilePicUrl: jest.fn().mockResolvedValue('https://example.com/pic.jpg'),
-  setStatus: jest.fn().mockResolvedValue(undefined),
-  setDisplayName: jest.fn().mockResolvedValue(undefined),
-  setProfilePicture: jest.fn().mockResolvedValue(undefined),
-  deleteProfilePicture: jest.fn().mockResolvedValue(undefined),
-  getBlockedContacts: jest.fn().mockResolvedValue([]),
-  getLabels: jest.fn().mockResolvedValue([]),
-  getLabelById: jest.fn().mockResolvedValue({ id: 'label-1', name: 'VIP' }),
-  addOrRemoveLabels: jest.fn().mockResolvedValue(undefined),
-  getChatsByLabel: jest.fn().mockResolvedValue([]),
-  info: {
-    wid: { user: '628123456789' },
-    pushname: 'Test Bot',
-    platform: 'android',
-  },
-  on: jest.fn(),
-};
-
-export const mockSessionManagerService = {
-  getClient: jest.fn().mockReturnValue(mockWhatsappClient),
-  sendMessage: jest
-    .fn()
-    .mockResolvedValue({ id: { _serialized: 'mock-msg-id' } }),
-  sendMedia: jest
-    .fn()
-    .mockResolvedValue({ id: { _serialized: 'mock-msg-id' } }),
-  getHealthySession: jest.fn().mockResolvedValue('mock-session-id'),
-  initClient: jest.fn().mockResolvedValue(undefined),
-  getConnectedSessions: jest.fn().mockReturnValue(['mock-session-id']),
-};
-
-```
----
-
-## File : `test/unit/auth/auth.service.spec.ts`
-
-```ts
-import { Test, TestingModule } from '@nestjs/testing';
-import { JwtService } from '@nestjs/jwt';
-import { ConfigService } from '@nestjs/config';
-import {
-  ForbiddenException,
-  UnauthorizedException,
-  BadRequestException,
-} from '@nestjs/common';
-import { AuthService } from '../../../src/modules/auth/auth.service';
-import { mockPrismaService } from '../../mocks/prisma.mock';
-import { mockRedisService } from '../../mocks/redis.mock';
-import { PrismaService } from '../../../src/prisma/prisma.service';
-import { RedisService } from '../../../src/redis/redis.service';
-import { AuditService } from '../../../src/modules/audit/audit.service';
-
-const mockJwtService = {
-  sign: jest.fn().mockReturnValue('mock.jwt.token'),
-  verify: jest.fn(),
-};
-const mockConfigService = { get: jest.fn().mockReturnValue('admin@test.com') };
-const mockAuditService = { log: jest.fn().mockResolvedValue(undefined) };
-
-describe('AuthService', () => {
-  let service: AuthService;
-
-  beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        AuthService,
-        { provide: PrismaService, useValue: mockPrismaService },
-        { provide: RedisService, useValue: mockRedisService },
-        { provide: JwtService, useValue: mockJwtService },
-        { provide: ConfigService, useValue: mockConfigService },
-        { provide: AuditService, useValue: mockAuditService },
-      ],
-    }).compile();
-    service = module.get<AuthService>(AuthService);
-    jest.clearAllMocks();
-  });
-
-  describe('validateGoogleUser', () => {
-    const profile = {
-      email: 'user@test.com',
-      name: 'Test User',
-      picture: 'https://pic.com',
-    };
-
-    it('creates new user on first login', async () => {
-      mockPrismaService.user.findUnique.mockResolvedValue(null);
-      mockPrismaService.user.create.mockResolvedValue({
-        id: 'u1',
-        ...profile,
-        role: 'user',
-        isActive: true,
-        twoFaEnabled: false,
-      });
-      mockPrismaService.userQuota.create.mockResolvedValue({});
-      const result = await service.validateGoogleUser(
-        profile,
-        '127.0.0.1',
-        'jest',
-      );
-      expect(mockPrismaService.user.create).toHaveBeenCalled();
-      expect(result.email).toBe(profile.email);
-    });
-
-    it('returns existing user on subsequent login', async () => {
-      const existing = {
-        id: 'u1',
-        ...profile,
-        role: 'user',
-        isActive: true,
-        twoFaEnabled: false,
-      };
-      mockPrismaService.user.findUnique.mockResolvedValue(existing);
-      const result = await service.validateGoogleUser(
-        profile,
-        '127.0.0.1',
-        'jest',
-      );
-      expect(mockPrismaService.user.create).not.toHaveBeenCalled();
-      expect(result.id).toBe('u1');
-    });
-
-    it('throws ForbiddenException for inactive user', async () => {
-      mockPrismaService.user.findUnique.mockResolvedValue({
-        id: 'u1',
-        ...profile,
-        role: 'user',
-        isActive: false,
-        twoFaEnabled: false,
-      });
-      await expect(
-        service.validateGoogleUser(profile, '127.0.0.1', 'jest'),
-      ).rejects.toThrow(ForbiddenException);
-    });
-
-    it('assigns admin role if email matches ADMIN_EMAIL', async () => {
-      mockPrismaService.user.findUnique.mockResolvedValue(null);
-      mockPrismaService.user.create.mockResolvedValue({
-        id: 'u-admin',
-        email: 'admin@test.com',
-        name: 'Admin',
-        role: 'admin',
-        isActive: true,
-        twoFaEnabled: false,
-      });
-      mockPrismaService.userQuota.create.mockResolvedValue({});
-      const result = await service.validateGoogleUser(
-        { ...profile, email: 'admin@test.com' },
-        '127.0.0.1',
-        'jest',
-      );
-      expect(result.role).toBe('admin');
-    });
-  });
-
-  describe('signJwt', () => {
-    it('returns signed token', () => {
-      const token = service.signJwt({
-        id: 'u1',
-        email: 'a@b.com',
-        role: 'user',
-      });
-      expect(mockJwtService.sign).toHaveBeenCalledWith({
-        sub: 'u1',
-        email: 'a@b.com',
-        role: 'user',
-      });
-      expect(token).toBe('mock.jwt.token');
-    });
-  });
-
-  describe('createTempToken & verifyTempToken', () => {
-    it('stores and retrieves temp token', async () => {
-      mockRedisService.set.mockResolvedValue(undefined);
-      const token = await service.createTempToken('u1');
-      expect(mockRedisService.set).toHaveBeenCalled();
-      expect(typeof token).toBe('string');
-      mockRedisService.get.mockResolvedValue('u1');
-      const userId = await service.verifyTempToken(token);
-      expect(userId).toBe('u1');
-    });
-
-    it('throws UnauthorizedException if temp token expired', async () => {
-      mockRedisService.get.mockResolvedValue(null);
-      await expect(service.verifyTempToken('invalid')).rejects.toThrow(
-        UnauthorizedException,
-      );
-    });
-  });
-
-  describe('setup2fa', () => {
-    it('returns qrCode and secret', async () => {
-      mockPrismaService.user.findUnique.mockResolvedValue({
-        id: 'u1',
-        email: 'a@b.com',
-        twoFaEnabled: false,
-      });
-      mockRedisService.set.mockResolvedValue(undefined);
-      const result = await service.setup2fa('u1');
-      expect(result).toHaveProperty('qrCode');
-      expect(result).toHaveProperty('secret');
-    });
-
-    it('throws if 2FA already enabled', async () => {
-      mockPrismaService.user.findUnique.mockResolvedValue({
-        id: 'u1',
-        email: 'a@b.com',
-        twoFaEnabled: true,
-      });
-      await expect(service.setup2fa('u1')).rejects.toThrow(BadRequestException);
-    });
-  });
-
-  describe('regenerateBackupCodes', () => {
-    it('throws if 2FA not enabled', async () => {
-      mockPrismaService.user.findUnique.mockResolvedValue({
-        id: 'u1',
-        email: 'a@b.com',
-        twoFaEnabled: false,
-        twoFaSecret: null,
-      });
-      await expect(
-        service.regenerateBackupCodes('u1', '123456'),
-      ).rejects.toThrow(BadRequestException);
-    });
-  });
-
-  describe('logout', () => {
-    it('logs audit on logout', async () => {
-      await service.logout('u1', 'a@b.com', '127.0.0.1', 'jest');
-      expect(mockAuditService.log).toHaveBeenCalledWith(
-        expect.objectContaining({ action: 'LOGOUT' }),
-      );
-    });
-  });
-});
-
-```
----
-
-## File : `test/unit/auto-reply/auto-reply.engine.spec.ts`
-
-```ts
-import { Test, TestingModule } from "@nestjs/testing";
-import { AutoReplyEngine } from "../../../src/modules/auto-reply/auto-reply.engine";
-import { mockPrismaService } from "../../mocks/prisma.mock";
-import { mockSessionManagerService } from "../../mocks/whatsapp.mock";
-import { PrismaService } from "../../../src/prisma/prisma.service";
-import { SessionManagerService } from "../../../src/modules/sessions/session-manager.service";
-import { AiService } from "../../../src/modules/ai/ai.service";
-
-const mockAiService = { getReply: jest.fn() };
-
-describe("AutoReplyEngine", () => {
-  let engine: AutoReplyEngine;
-
-  beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        AutoReplyEngine,
-        { provide: PrismaService, useValue: mockPrismaService },
-        { provide: SessionManagerService, useValue: mockSessionManagerService },
-        { provide: AiService, useValue: mockAiService },
-      ],
-    }).compile();
-    engine = module.get<AutoReplyEngine>(AutoReplyEngine);
-    jest.clearAllMocks();
-  });
-
-  it("replies on exact keyword match", async () => {
-    mockPrismaService.autoReply.findMany.mockResolvedValue([
-      {
-        id: "r1",
-        keyword: "halo",
-        response: "Halo juga!",
-        matchType: "exact",
-        isActive: true,
-        priority: 0,
-      },
-    ]);
-
-    await engine.process("u1", "s1", "628111@s.whatsapp.net", "halo");
-    expect(mockSessionManagerService.sendMessage).toHaveBeenCalledWith(
-      "s1",
-      "628111@s.whatsapp.net",
-      "Halo juga!",
-    );
-  });
-
-  it("replies on contains keyword match", async () => {
-    mockPrismaService.autoReply.findMany.mockResolvedValue([
-      {
-        id: "r1",
-        keyword: "promo",
-        response: "Cek promo kami!",
-        matchType: "contains",
-        isActive: true,
-        priority: 0,
-      },
-    ]);
-
-    await engine.process(
-      "u1",
-      "s1",
-      "628111@s.whatsapp.net",
-      "ada promo apa hari ini?",
-    );
-    expect(mockSessionManagerService.sendMessage).toHaveBeenCalled();
-  });
-
-  it("does not reply if no rule matches", async () => {
-    mockPrismaService.autoReply.findMany.mockResolvedValue([
-      {
-        id: "r1",
-        keyword: "halo",
-        response: "Halo!",
-        matchType: "exact",
-        isActive: true,
-        priority: 0,
-      },
-    ]);
-
-    await engine.process("u1", "s1", "628111@s.whatsapp.net", "selamat pagi");
-    expect(mockSessionManagerService.sendMessage).not.toHaveBeenCalled();
-  });
-
-  it("only fires first matching rule (by priority)", async () => {
-    mockPrismaService.autoReply.findMany.mockResolvedValue([
-      {
-        id: "r1",
-        keyword: "hi",
-        response: "Rule 1",
-        matchType: "exact",
-        isActive: true,
-        priority: 0,
-      },
-      {
-        id: "r2",
-        keyword: "hi",
-        response: "Rule 2",
-        matchType: "exact",
-        isActive: true,
-        priority: 1,
-      },
-    ]);
-
-    await engine.process("u1", "s1", "628111@s.whatsapp.net", "hi");
-    expect(mockSessionManagerService.sendMessage).toHaveBeenCalledTimes(1);
-    expect(mockSessionManagerService.sendMessage).toHaveBeenCalledWith(
-      "s1",
-      "628111@s.whatsapp.net",
-      "Rule 1",
-    );
-  });
-});
-
-```
----
-
-## File : `test/unit/broadcast/broadcast.service.spec.ts`
-
-```ts
-import { Test, TestingModule } from '@nestjs/testing';
-import { BroadcastProcessor } from '../../../src/modules/broadcast/processors/broadcast.processor';
-import { mockPrismaService } from '../../mocks/prisma.mock';
-import { mockSessionManagerService } from '../../mocks/whatsapp.mock';
-import { PrismaService } from '../../../src/prisma/prisma.service';
-import { SessionManagerService } from '../../../src/modules/sessions/session-manager.service';
-import { GatewayService } from '../../../src/gateway/gateway.service';
-
-jest.mock('../../../src/common/utils/mime-validator.util', () => ({
-  validateMimeType: jest.fn().mockResolvedValue('image/jpeg'),
-}));
-
-const mockGatewayService = {
-  emitBroadcastProgress: jest.fn(),
-  emitBroadcastComplete: jest.fn(),
-};
-
-describe('BroadcastProcessor', () => {
-  let processor: BroadcastProcessor;
-
-  beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        BroadcastProcessor,
-        { provide: PrismaService, useValue: mockPrismaService },
-        { provide: SessionManagerService, useValue: mockSessionManagerService },
-        { provide: GatewayService, useValue: mockGatewayService },
-      ],
-    }).compile();
-    processor = module.get<BroadcastProcessor>(BroadcastProcessor);
-    jest.clearAllMocks();
-  });
-
-  const makeJob = (overrides = {}) =>
-    ({
-      data: {
-        campaignId: 'c1',
-        userId: 'u1',
-        recipients: ['6281234567890'],
-        message: 'Hello',
-        mediaPath: null,
-        sessions: ['s1'],
-        ...overrides,
-      },
-    }) as any;
-
-  it('processes broadcast and marks campaign completed', async () => {
-    mockPrismaService.campaign.update.mockResolvedValue({});
-    mockPrismaService.messageLog.create.mockResolvedValue({});
-    mockPrismaService.userQuota.updateMany.mockResolvedValue({});
-    mockSessionManagerService.sendMessage.mockResolvedValue({
-      id: { _serialized: 'msg-1' },
-    });
-
-    await processor.process(makeJob());
-
-    expect(mockPrismaService.campaign.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ status: 'completed' }),
-      }),
-    );
-    expect(mockGatewayService.emitBroadcastComplete).toHaveBeenCalledWith(
-      'u1',
-      'c1',
-      1,
-      0,
-    );
-  });
-
-  it('falls over to next session if first session fails', async () => {
-    mockPrismaService.campaign.update.mockResolvedValue({});
-    mockPrismaService.messageLog.create.mockResolvedValue({});
-    mockPrismaService.userQuota.updateMany.mockResolvedValue({});
-
-    mockSessionManagerService.sendMessage
-      .mockRejectedValueOnce(new Error('Session s1 failed'))
-      .mockResolvedValueOnce({ id: { _serialized: 'msg-1' } });
-
-    await processor.process(makeJob({ sessions: ['s1', 's2'] }));
-
-    expect(mockSessionManagerService.sendMessage).toHaveBeenCalledTimes(2);
-    expect(mockGatewayService.emitBroadcastComplete).toHaveBeenCalledWith(
-      'u1',
-      'c1',
-      1,
-      0,
-    );
-  });
-
-  it('marks recipient as failed when all sessions fail', async () => {
-    mockPrismaService.campaign.update.mockResolvedValue({});
-    mockPrismaService.messageLog.create.mockResolvedValue({});
-    mockPrismaService.userQuota.updateMany.mockResolvedValue({});
-    mockSessionManagerService.sendMessage.mockRejectedValue(
-      new Error('All failed'),
-    );
-
-    await processor.process(makeJob({ sessions: ['s1'] }));
-
-    expect(mockGatewayService.emitBroadcastComplete).toHaveBeenCalledWith(
-      'u1',
-      'c1',
-      0,
-      1,
-    );
-    expect(mockPrismaService.messageLog.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({
-          status: 'failed',
-          errorMessage: 'All sessions failed',
-        }),
-      }),
-    );
-  });
-
-  it('emits progress for each recipient', async () => {
-    mockPrismaService.campaign.update.mockResolvedValue({});
-    mockPrismaService.messageLog.create.mockResolvedValue({});
-    mockPrismaService.userQuota.updateMany.mockResolvedValue({});
-    mockSessionManagerService.sendMessage.mockResolvedValue({
-      id: { _serialized: 'msg-1' },
-    });
-
-    await processor.process(makeJob({ recipients: ['628111', '628222'] }));
-
-    expect(mockGatewayService.emitBroadcastProgress).toHaveBeenCalledTimes(2);
-    expect(mockGatewayService.emitBroadcastProgress).toHaveBeenCalledWith(
-      'u1',
-      expect.objectContaining({ current: 1, total: 2, percentage: 50 }),
-    );
-  });
-});
-
-```
----
-
-## File : `test/unit/broadcast-list/broadcast-list.service.spec.ts`
-
-```ts
-import { Test, TestingModule } from '@nestjs/testing';
-import { BadRequestException } from '@nestjs/common';
-import { BroadcastListService } from '../../../src/modules/broadcast-list/broadcast-list.service';
-import {
-  mockSessionManagerService,
-  mockWhatsappClient,
-} from '../../mocks/whatsapp.mock';
-import { SessionManagerService } from '../../../src/modules/sessions/session-manager.service';
-
-describe('BroadcastListService', () => {
-  let service: BroadcastListService;
-
-  beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        BroadcastListService,
-        { provide: SessionManagerService, useValue: mockSessionManagerService },
-      ],
-    }).compile();
-    service = module.get<BroadcastListService>(BroadcastListService);
-    jest.clearAllMocks();
-  });
-
-  describe('getAll', () => {
-    it('returns only broadcast list chats', async () => {
-      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
-      mockWhatsappClient.getChats.mockResolvedValue([
-        {
-          isBroadcast: true,
-          id: { server: 'broadcast', _serialized: 'bl1@broadcast' },
-        },
-        {
-          isBroadcast: false,
-          id: { server: 'g.us', _serialized: 'group@g.us' },
-        },
-        {
-          isBroadcast: true,
-          id: { server: 'broadcast', _serialized: 'bl2@broadcast' },
-        },
-      ]);
-      const result = await service.getAll('s1');
-      expect(result).toHaveLength(2);
-    });
-
-    it('throws if session not connected', async () => {
-      mockSessionManagerService.getClient.mockReturnValue(null);
-      await expect(service.getAll('s1')).rejects.toThrow(BadRequestException);
-    });
-  });
-
-  describe('send', () => {
-    it('sends message to broadcast list', async () => {
-      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
-      mockSessionManagerService.sendMessage.mockResolvedValue({
-        id: { _serialized: 'msg-1' },
-      });
-      await service.send('s1', 'bl1@broadcast', 'Hello everyone');
-      expect(mockSessionManagerService.sendMessage).toHaveBeenCalledWith(
-        's1',
-        'bl1@broadcast',
-        'Hello everyone',
-      );
-    });
-  });
-});
-
-```
----
-
-## File : `test/unit/contacts/contacts.service.spec.ts`
-
-```ts
-import { Test, TestingModule } from '@nestjs/testing';
-import {
-  ConflictException,
-  NotFoundException,
-  BadRequestException,
-} from '@nestjs/common';
-import { ContactsService } from '../../../src/modules/contacts/contacts.service';
-import { mockPrismaService } from '../../mocks/prisma.mock';
-import { PrismaService } from '../../../src/prisma/prisma.service';
-
-jest.mock('axios');
-import axios from 'axios';
-const mockedAxios = axios as jest.Mocked<typeof axios>;
-
-describe('ContactsService', () => {
-  let service: ContactsService;
-
-  beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        ContactsService,
-        { provide: PrismaService, useValue: mockPrismaService },
-      ],
-    }).compile();
-    service = module.get<ContactsService>(ContactsService);
-    jest.clearAllMocks();
-  });
-
-  describe('create', () => {
-    it('creates contact with normalized number', async () => {
-      mockPrismaService.contact.findFirst.mockResolvedValue(null);
-      mockPrismaService.contact.create.mockResolvedValue({
-        id: 'c1',
-        name: 'Budi',
-        number: '6281234567890',
-        userId: 'u1',
-      });
-      const result = await service.create('u1', {
-        name: 'Budi',
-        number: '081234567890',
-      });
-      expect(result.number).toBe('6281234567890');
-    });
-
-    it('throws ConflictException on duplicate number', async () => {
-      mockPrismaService.contact.findFirst.mockResolvedValue({ id: 'existing' });
-      await expect(
-        service.create('u1', { name: 'Budi', number: '081234567890' }),
-      ).rejects.toThrow(ConflictException);
-    });
-  });
-
-  describe('update', () => {
-    it('updates contact successfully', async () => {
-      mockPrismaService.contact.findFirst.mockResolvedValue({
-        id: 'c1',
-        userId: 'u1',
-      });
-      mockPrismaService.contact.update.mockResolvedValue({
-        id: 'c1',
-        name: 'Budi Updated',
-      });
-      const result = await service.update('u1', 'c1', { name: 'Budi Updated' });
-      expect(result.name).toBe('Budi Updated');
-    });
-
-    it('throws NotFoundException if not owned', async () => {
-      mockPrismaService.contact.findFirst.mockResolvedValue(null);
-      await expect(service.update('u1', 'c1', { name: 'X' })).rejects.toThrow(
-        NotFoundException,
-      );
-    });
-  });
-
-  describe('remove', () => {
-    it('deletes contact', async () => {
-      mockPrismaService.contact.findFirst.mockResolvedValue({
-        id: 'c1',
-        userId: 'u1',
-      });
-      mockPrismaService.contact.delete.mockResolvedValue({});
-      await service.remove('u1', 'c1');
-      expect(mockPrismaService.contact.delete).toHaveBeenCalledWith({
-        where: { id: 'c1' },
-      });
-    });
-  });
-
-  describe('bulkDelete', () => {
-    it('deletes contacts by ids', async () => {
-      mockPrismaService.contact.deleteMany.mockResolvedValue({ count: 3 });
-      const result = await service.bulkDelete('u1', {
-        ids: ['c1', 'c2', 'c3'],
-      });
-      expect(result.deleted).toBe(3);
-    });
-
-    it('deletes all contacts when selectAll is true', async () => {
-      mockPrismaService.contact.deleteMany.mockResolvedValue({ count: 10 });
-      const result = await service.bulkDelete('u1', { selectAll: true });
-      expect(result.deleted).toBe(10);
-    });
-  });
-
-  describe('importCsv', () => {
-    it('imports valid CSV rows', async () => {
-      mockPrismaService.contact.upsert.mockResolvedValue({});
-      const csv = 'name,number,tag\nBudi,081234567890,vip\nSiti,082345678901,';
-      const result = await service.importCsv('u1', Buffer.from(csv));
-      expect(result.imported).toBe(2);
-      expect(result.skipped).toBe(0);
-    });
-
-    it('skips duplicate contacts', async () => {
-      mockPrismaService.contact.upsert.mockRejectedValue({ code: 'P2002' });
-      const csv = 'name,number,tag\nBudi,081234567890,';
-      const result = await service.importCsv('u1', Buffer.from(csv));
-      expect(result.skipped).toBe(1);
-      expect(result.imported).toBe(0);
-    });
-  });
-
-  describe('importFromGoogleContacts', () => {
-    it('imports contacts from Google API response', async () => {
-      mockedAxios.get = jest.fn().mockResolvedValue({
-        data: {
-          connections: [
-            {
-              names: [{ displayName: 'Budi' }],
-              phoneNumbers: [{ value: '081234567890' }],
-            },
-          ],
-          nextPageToken: undefined,
-        },
-      });
-      mockPrismaService.contact.upsert.mockResolvedValue({});
-      const result = await service.importFromGoogleContacts(
-        'u1',
-        'valid-token',
-      );
-      expect(result.imported).toBe(1);
-    });
-
-    it('throws BadRequestException on invalid token', async () => {
-      mockedAxios.get = jest
-        .fn()
-        .mockRejectedValue(new Error('401 Unauthorized'));
-      await expect(
-        service.importFromGoogleContacts('u1', 'bad-token'),
-      ).rejects.toThrow(BadRequestException);
-    });
-  });
-
-  describe('exportCsv', () => {
-    it('returns CSV string with headers', async () => {
-      mockPrismaService.contact.findMany.mockResolvedValue([
-        { name: 'Budi', number: '6281234567890', tag: 'vip' },
-      ]);
-      const csv = await service.exportCsv('u1');
-      expect(csv).toContain('name,number,tag');
-      expect(csv).toContain('Budi');
-    });
-  });
-});
-
-```
----
-
-## File : `test/unit/customer-note/customer-note.service.spec.ts`
-
-```ts
-import { Test, TestingModule } from '@nestjs/testing';
-import { NotFoundException } from '@nestjs/common';
-import { CustomerNoteService } from '../../../src/modules/customer-note/customer-note.service';
-import { mockPrismaService } from '../../mocks/prisma.mock';
-import { PrismaService } from '../../../src/prisma/prisma.service';
-
-describe('CustomerNoteService', () => {
-  let service: CustomerNoteService;
-
-  beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        CustomerNoteService,
-        { provide: PrismaService, useValue: mockPrismaService },
-      ],
-    }).compile();
-    service = module.get<CustomerNoteService>(CustomerNoteService);
-    jest.clearAllMocks();
-  });
-
-  describe('getNote', () => {
-    it('returns notes for existing contact', async () => {
-      mockPrismaService.contact.findFirst.mockResolvedValue({
-        id: 'c1',
-        userId: 'u1',
-        notes: 'VIP customer',
-      });
-      const result = await service.getNote('u1', 'c1');
-      expect(result.notes).toBe('VIP customer');
-      expect(result.contactId).toBe('c1');
-    });
-
-    it('throws NotFoundException if contact not owned', async () => {
-      mockPrismaService.contact.findFirst.mockResolvedValue(null);
-      await expect(service.getNote('u1', 'c1')).rejects.toThrow(
-        NotFoundException,
-      );
-    });
-  });
-
-  describe('upsertNote', () => {
-    it('updates note content', async () => {
-      mockPrismaService.contact.findFirst.mockResolvedValue({
-        id: 'c1',
-        userId: 'u1',
-        notes: '',
-      });
-      mockPrismaService.contact.update.mockResolvedValue({
-        id: 'c1',
-        notes: 'New note',
-      });
-      const result = await service.upsertNote('u1', 'c1', 'New note');
-      expect(result.notes).toBe('New note');
-    });
-
-    it('throws NotFoundException if contact not owned', async () => {
-      mockPrismaService.contact.findFirst.mockResolvedValue(null);
-      await expect(service.upsertNote('u1', 'c1', 'note')).rejects.toThrow(
-        NotFoundException,
-      );
-    });
-  });
-
-  describe('deleteNote', () => {
-    it('sets notes to null', async () => {
-      mockPrismaService.contact.findFirst.mockResolvedValue({
-        id: 'c1',
-        userId: 'u1',
-        notes: 'Old note',
-      });
-      mockPrismaService.contact.update.mockResolvedValue({
-        id: 'c1',
-        notes: null,
-      });
-      const result = await service.deleteNote('u1', 'c1');
-      expect(result).toHaveProperty('deleted', true);
-      expect(mockPrismaService.contact.update).toHaveBeenCalledWith({
-        where: { id: 'c1' },
-        data: { notes: null },
-      });
-    });
-
-    it('throws NotFoundException if contact not owned', async () => {
-      mockPrismaService.contact.findFirst.mockResolvedValue(null);
-      await expect(service.deleteNote('u1', 'c1')).rejects.toThrow(
-        NotFoundException,
-      );
-    });
-  });
-});
-
-```
----
-
-## File : `test/unit/drip/drip.manager.spec.ts`
-
-```ts
-import { Test, TestingModule } from '@nestjs/testing';
-import { DripManager } from '../../../src/modules/drip/drip.manager';
-import { mockPrismaService } from '../../mocks/prisma.mock';
-import { mockSessionManagerService } from '../../mocks/whatsapp.mock';
-import { PrismaService } from '../../../src/prisma/prisma.service';
-import { SessionManagerService } from '../../../src/modules/sessions/session-manager.service';
-
-describe('DripManager', () => {
-  let manager: DripManager;
-
-  beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        DripManager,
-        { provide: PrismaService, useValue: mockPrismaService },
-        { provide: SessionManagerService, useValue: mockSessionManagerService },
-      ],
-    }).compile();
-    manager = module.get<DripManager>(DripManager);
-    jest.clearAllMocks();
-  });
-
-  describe('run', () => {
-    it('runs without error when no campaigns exist', async () => {
-      mockPrismaService.dripCampaign.findMany.mockResolvedValue([]);
-      mockPrismaService.dripSubscription.findMany.mockResolvedValue([]);
-      await expect(manager.run()).resolves.not.toThrow();
-    });
-
-    it('auto-enrolls contacts with matching tag', async () => {
-      mockPrismaService.dripCampaign.findMany.mockResolvedValue([
-        { id: 'd1', userId: 'u1', triggerTag: 'vip', isActive: true },
-      ]);
-      mockPrismaService.contact.findMany.mockResolvedValue([
-        { id: 'c1', userId: 'u1', number: '628111', name: 'Budi', tag: 'vip' },
-      ]);
-      mockPrismaService.dripSubscription.upsert.mockResolvedValue({});
-      mockPrismaService.dripSubscription.findMany.mockResolvedValue([]);
-
-      await manager.run();
-
-      expect(mockPrismaService.dripSubscription.upsert).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { dripId_contactId: { dripId: 'd1', contactId: 'c1' } },
-        }),
-      );
-    });
-
-    it('sends due drip step and updates subscription', async () => {
-      mockPrismaService.dripCampaign.findMany.mockResolvedValue([]);
-
-      const now = new Date();
-      const startDate = new Date(now);
-      startDate.setDate(startDate.getDate() - 1);
-
-      const currentHour = now.getHours().toString().padStart(2, '0');
-      const currentMin = now.getMinutes().toString().padStart(2, '0');
-      const timeAt = `${currentHour}:${currentMin}`;
-
-      mockPrismaService.dripSubscription.findMany.mockResolvedValue([
-        {
-          id: 'sub1',
-          status: 'active',
-          startDate,
-          lastStepDay: 0,
-          drip: {
-            id: 'd1',
-            userId: 'u1',
-            sessionId: 's1',
-            steps: [
-              { id: 'step1', dayOffset: 1, timeAt, message: 'Hello {name}' },
-            ],
-          },
-          contact: { id: 'c1', number: '628111', name: 'Budi' },
-        },
-      ]);
-      mockPrismaService.dripSubscription.update.mockResolvedValue({});
-      mockSessionManagerService.sendMessage.mockResolvedValue({});
-
-      await manager.run();
-
-      expect(mockSessionManagerService.sendMessage).toHaveBeenCalledWith(
-        's1',
-        expect.stringContaining('@s.whatsapp.net'),
-        'Hello Budi',
-      );
-      expect(mockPrismaService.dripSubscription.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
-            lastStepDay: 1,
-            status: 'completed',
-          }),
-        }),
-      );
-    });
-  });
-});
-
-```
----
-
-## File : `test/unit/groups/groups.service.spec.ts`
-
-```ts
-import { Test, TestingModule } from '@nestjs/testing';
-import { BadRequestException } from '@nestjs/common';
-import { GroupsService } from '../../../src/modules/groups/groups.service';
-import {
-  mockSessionManagerService,
-  mockWhatsappClient,
-} from '../../mocks/whatsapp.mock';
-import { SessionManagerService } from '../../../src/modules/sessions/session-manager.service';
-import { MembershipRequestAction } from '../../../src/modules/groups/dto/membership-request.dto';
-
-describe('GroupsService', () => {
-  let service: GroupsService;
-
-  beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        GroupsService,
-        { provide: SessionManagerService, useValue: mockSessionManagerService },
-      ],
-    }).compile();
-    service = module.get<GroupsService>(GroupsService);
-    jest.clearAllMocks();
-  });
-
-  describe('create', () => {
-    it('creates group successfully', async () => {
-      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
-      const result = await service.create('s1', 'Test Group', [
-        '628111@s.whatsapp.net',
-      ]);
-      expect(mockWhatsappClient.createGroup).toHaveBeenCalledWith(
-        'Test Group',
-        ['628111@s.whatsapp.net'],
-      );
-      expect(result).toHaveProperty('gid');
-    });
-
-    it('throws if session not connected', async () => {
-      mockSessionManagerService.getClient.mockReturnValue(null);
-      await expect(service.create('s1', 'Test', ['628111'])).rejects.toThrow(
-        BadRequestException,
-      );
-    });
-  });
-
-  describe('addParticipants', () => {
-    it('adds participants to group', async () => {
-      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
-      await service.addParticipants('s1', 'group@g.us', [
-        '628111@s.whatsapp.net',
-      ]);
-      const group = await mockWhatsappClient.getChatById('group@g.us');
-      expect(group.addParticipants).toHaveBeenCalledWith([
-        '628111@s.whatsapp.net',
-      ]);
-    });
-  });
-
-  describe('removeParticipants', () => {
-    it('removes participants from group', async () => {
-      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
-      await service.removeParticipants('s1', 'group@g.us', [
-        '628111@s.whatsapp.net',
-      ]);
-      const group = await mockWhatsappClient.getChatById('group@g.us');
-      expect(group.removeParticipants).toHaveBeenCalledWith([
-        '628111@s.whatsapp.net',
-      ]);
-    });
-  });
-
-  describe('promoteParticipants', () => {
-    it('promotes participants to admin', async () => {
-      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
-      await service.promoteParticipants('s1', 'group@g.us', [
-        '628111@s.whatsapp.net',
-      ]);
-      const group = await mockWhatsappClient.getChatById('group@g.us');
-      expect(group.promoteParticipants).toHaveBeenCalledWith([
-        '628111@s.whatsapp.net',
-      ]);
-    });
-  });
-
-  describe('demoteParticipants', () => {
-    it('demotes admins to members', async () => {
-      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
-      await service.demoteParticipants('s1', 'group@g.us', [
-        '628111@s.whatsapp.net',
-      ]);
-      const group = await mockWhatsappClient.getChatById('group@g.us');
-      expect(group.demoteParticipants).toHaveBeenCalledWith([
-        '628111@s.whatsapp.net',
-      ]);
-    });
-  });
-
-  describe('getInviteCode', () => {
-    it('returns invite link', async () => {
-      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
-      const result = await service.getInviteCode('s1', 'group@g.us');
-      expect(result.inviteLink).toBe('https://chat.whatsapp.com/abc123');
-    });
-  });
-
-  describe('handleMembershipRequest', () => {
-    it('approves join request', async () => {
-      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
-      await service.handleMembershipRequest('s1', 'group@g.us', {
-        requesterJid: '628111@s.whatsapp.net',
-        action: MembershipRequestAction.APPROVE,
-      });
-      const group = await mockWhatsappClient.getChatById('group@g.us');
-      expect(group.approveGroupMembershipRequests).toHaveBeenCalledWith([
-        '628111@s.whatsapp.net',
-      ]);
-    });
-
-    it('rejects join request', async () => {
-      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
-      await service.handleMembershipRequest('s1', 'group@g.us', {
-        requesterJid: '628111@s.whatsapp.net',
-        action: MembershipRequestAction.REJECT,
-      });
-      const group = await mockWhatsappClient.getChatById('group@g.us');
-      expect(group.rejectGroupMembershipRequests).toHaveBeenCalledWith([
-        '628111@s.whatsapp.net',
-      ]);
-    });
-  });
-
-  describe('getMembershipRequests', () => {
-    it('returns pending join requests', async () => {
-      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
-      const result = await service.getMembershipRequests('s1', 'group@g.us');
-      expect(Array.isArray(result)).toBe(true);
-    });
-  });
-});
-
-```
----
-
-## File : `test/unit/messages/messages.service.spec.ts`
-
-```ts
-import { Test, TestingModule } from '@nestjs/testing';
-import { BadRequestException, NotFoundException } from '@nestjs/common';
-import { MessagesService } from '../../../src/modules/messages/messages.service';
-import { mockPrismaService } from '../../mocks/prisma.mock';
-import { mockRedisService } from '../../mocks/redis.mock';
-import {
-  mockSessionManagerService,
-  mockWhatsappClient,
-} from '../../mocks/whatsapp.mock';
-import { PrismaService } from '../../../src/prisma/prisma.service';
-import { RedisService } from '../../../src/redis/redis.service';
-import { SessionManagerService } from '../../../src/modules/sessions/session-manager.service';
-
-jest.mock('../../../src/common/utils/mime-validator.util', () => ({
-  validateMimeType: jest.fn().mockResolvedValue('image/jpeg'),
-}));
-
-describe('MessagesService', () => {
-  let service: MessagesService;
-
-  beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        MessagesService,
-        { provide: PrismaService, useValue: mockPrismaService },
-        { provide: RedisService, useValue: mockRedisService },
-        { provide: SessionManagerService, useValue: mockSessionManagerService },
-      ],
-    }).compile();
-    service = module.get<MessagesService>(MessagesService);
-    jest.clearAllMocks();
-  });
-
-  describe('send', () => {
-    it('sends message using auto session', async () => {
-      mockSessionManagerService.getHealthySession.mockResolvedValue('s1');
-      mockSessionManagerService.sendMessage.mockResolvedValue({
-        id: { _serialized: 'msg-1' },
-      });
-      mockPrismaService.messageLog.create.mockResolvedValue({});
-      mockPrismaService.userQuota.updateMany.mockResolvedValue({});
-      const result = await service.send('u1', {
-        to: '08123456789',
-        message: 'Hello',
-        sessionId: 'auto',
-      });
-      expect(result.messageId).toBe('msg-1');
-    });
-
-    it('logs failed message on send error', async () => {
-      mockSessionManagerService.getHealthySession.mockResolvedValue('s1');
-      mockSessionManagerService.sendMessage.mockRejectedValue(
-        new Error('Network error'),
-      );
-      mockPrismaService.messageLog.create.mockResolvedValue({});
-      await expect(
-        service.send('u1', {
-          to: '08123456789',
-          message: 'Hello',
-          sessionId: 'auto',
-        }),
-      ).rejects.toThrow(BadRequestException);
-      expect(mockPrismaService.messageLog.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ status: 'failed' }),
-        }),
-      );
-    });
-
-    it('throws NO_SESSIONS when no healthy session', async () => {
-      mockSessionManagerService.getHealthySession.mockResolvedValue(null);
-      await expect(
-        service.send('u1', { to: '08123456789', message: 'Hello' }),
-      ).rejects.toThrow(BadRequestException);
-    });
-  });
-
-  describe('editMessage', () => {
-    it('edits message successfully', async () => {
-      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
-      const result = await service.editMessage(
-        'u1',
-        's1',
-        'mock-msg-id',
-        'Updated text',
-      );
-      expect(mockWhatsappClient.getMessageById).toHaveBeenCalledWith(
-        'mock-msg-id',
-      );
-      expect(result).toHaveProperty('edited', true);
-    });
-
-    it('throws SESSION_NOT_CONNECTED if client not found', async () => {
-      mockSessionManagerService.getClient.mockReturnValue(null);
-      await expect(
-        service.editMessage('u1', 's1', 'mock-msg-id', 'text'),
-      ).rejects.toThrow(BadRequestException);
-    });
-
-    it('throws NOT_FOUND if message not found', async () => {
-      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
-      mockWhatsappClient.getMessageById.mockResolvedValueOnce(null);
-      await expect(
-        service.editMessage('u1', 's1', 'unknown-id', 'text'),
-      ).rejects.toThrow(NotFoundException);
-    });
-  });
-
-  describe('forwardMessage', () => {
-    it('forwards message to another number', async () => {
-      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
-      const result = await service.forwardMessage(
-        'u1',
-        's1',
-        'mock-msg-id',
-        '08123456789',
-      );
-      expect(mockWhatsappClient.getMessageById).toHaveBeenCalledWith(
-        'mock-msg-id',
-      );
-      expect(result).toHaveProperty('forwarded', true);
-    });
-  });
-
-  describe('pinMessage', () => {
-    it('pins message successfully', async () => {
-      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
-      const result = await service.pinMessage('u1', 's1', 'mock-msg-id', 3600);
-      expect(result).toHaveProperty('pinned', true);
-    });
-
-    it('unpins message successfully', async () => {
-      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
-      const result = await service.unpinMessage('u1', 's1', 'mock-msg-id');
-      expect(result).toHaveProperty('unpinned', true);
-    });
-  });
-
-  describe('downloadMedia', () => {
-    it('downloads and saves media file', async () => {
-      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
-      const result = await service.downloadMedia(
-        'u1',
-        's1',
-        'mock-msg-id',
-        '/tmp',
-      );
-      expect(result).toHaveProperty('mimetype', 'image/jpeg');
-      expect(result).toHaveProperty('filename');
-    });
-
-    it('throws if message has no media', async () => {
-      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
-      mockWhatsappClient.getMessageById.mockResolvedValueOnce({
-        id: { _serialized: 'id' },
-        hasMedia: false,
-        delete: jest.fn(),
-        react: jest.fn(),
-      });
-      await expect(
-        service.downloadMedia('u1', 's1', 'mock-msg-id', '/tmp'),
-      ).rejects.toThrow(BadRequestException);
-    });
-  });
-
-  describe('reactMessage', () => {
-    it('reacts to message with emoji', async () => {
-      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
-      const result = await service.reactMessage('u1', 's1', 'mock-msg-id', '');
-      expect(result).toHaveProperty('reacted', true);
-    });
-  });
-
-  describe('deleteMessage', () => {
-    it('deletes message for everyone by default', async () => {
-      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
-      const result = await service.deleteMessage('u1', 's1', 'mock-msg-id');
-      expect(mockWhatsappClient.getMessageById).toHaveBeenCalledWith(
-        'mock-msg-id',
-      );
-      expect(result).toHaveProperty('deleted', true);
-    });
-  });
-
-  describe('isRegisteredUser', () => {
-    it('checks registered number', async () => {
-      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
-      mockWhatsappClient.isRegisteredUser.mockResolvedValue(true);
-      const result = await service.isRegisteredUser('u1', 's1', '08123456789');
-      expect(result.isRegistered).toBe(true);
-      expect(result.phone).toBe('6281234567890');
-    });
-  });
-
-  describe('getLogs', () => {
-    it('returns paginated message logs', async () => {
-      mockPrismaService.messageLog.findMany.mockResolvedValue([
-        { id: 1, target: '628123' },
-      ]);
-      mockPrismaService.messageLog.count.mockResolvedValue(1);
-      const result = await service.getLogs('u1', { page: 1, limit: 10 } as any);
-      expect(result.total).toBe(1);
-      expect(result.data).toHaveLength(1);
-    });
-  });
-});
-
-```
----
-
-## File : `test/unit/middlewares/maintenance.middleware.spec.ts`
-
-```ts
-import { Test, TestingModule } from '@nestjs/testing';
-import { ServiceUnavailableException } from '@nestjs/common';
-import { MaintenanceMiddleware } from '../../../src/common/middlewares/maintenance.middleware';
-import { mockPrismaService } from '../../mocks/prisma.mock';
-import { PrismaService } from '../../../src/prisma/prisma.service';
-
-describe('MaintenanceMiddleware', () => {
-  let middleware: MaintenanceMiddleware;
-  let next: jest.Mock;
-
-  beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        MaintenanceMiddleware,
-        { provide: PrismaService, useValue: mockPrismaService },
-      ],
-    }).compile();
-    middleware = module.get<MaintenanceMiddleware>(MaintenanceMiddleware);
-    next = jest.fn();
-    jest.clearAllMocks();
-  });
-
-  it('calls next when maintenance mode is off', async () => {
-    mockPrismaService.globalSetting.findUnique.mockResolvedValue({
-      key: 'maintenanceMode',
-      value: 'false',
-    });
-    await middleware.use({} as any, {} as any, next);
-    expect(next).toHaveBeenCalled();
-  });
-
-  it('calls next when no maintenance setting exists', async () => {
-    mockPrismaService.globalSetting.findUnique.mockResolvedValue(null);
-    await middleware.use({} as any, {} as any, next);
-    expect(next).toHaveBeenCalled();
-  });
-
-  it('throws ServiceUnavailableException for regular users when maintenance is on', async () => {
-    mockPrismaService.globalSetting.findUnique.mockResolvedValue({
-      key: 'maintenanceMode',
-      value: 'true',
-    });
-    const req = { user: { role: 'user' } } as any;
-    await expect(middleware.use(req, {} as any, next)).rejects.toThrow(
-      ServiceUnavailableException,
-    );
-    expect(next).not.toHaveBeenCalled();
-  });
-
-  it('calls next for admin users even when maintenance is on', async () => {
-    mockPrismaService.globalSetting.findUnique.mockResolvedValue({
-      key: 'maintenanceMode',
-      value: 'true',
-    });
-    const req = { user: { role: 'admin' } } as any;
-    await middleware.use(req, {} as any, next);
-    expect(next).toHaveBeenCalled();
-  });
-
-  it('calls next for super_admin users even when maintenance is on', async () => {
-    mockPrismaService.globalSetting.findUnique.mockResolvedValue({
-      key: 'maintenanceMode',
-      value: 'true',
-    });
-    const req = { user: { role: 'super_admin' } } as any;
-    await middleware.use(req, {} as any, next);
-    expect(next).toHaveBeenCalled();
-  });
-
-  it('throws for unauthenticated requests when maintenance is on', async () => {
-    mockPrismaService.globalSetting.findUnique.mockResolvedValue({
-      key: 'maintenanceMode',
-      value: 'true',
-    });
-    const req = { user: undefined } as any;
-    await expect(middleware.use(req, {} as any, next)).rejects.toThrow(
-      ServiceUnavailableException,
-    );
-  });
-});
-
-```
----
-
-## File : `test/unit/profile/profile.service.spec.ts`
-
-```ts
-import { Test, TestingModule } from '@nestjs/testing';
-import { BadRequestException } from '@nestjs/common';
-import { ProfileService } from '../../../src/modules/profile/profile.service';
-import {
-  mockSessionManagerService,
-  mockWhatsappClient,
-} from '../../mocks/whatsapp.mock';
-import { SessionManagerService } from '../../../src/modules/sessions/session-manager.service';
-
-jest.mock('../../../src/common/utils/mime-validator.util', () => ({
-  validateMimeType: jest.fn().mockResolvedValue('image/jpeg'),
-}));
-
-describe('ProfileService', () => {
-  let service: ProfileService;
-
-  beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        ProfileService,
-        { provide: SessionManagerService, useValue: mockSessionManagerService },
-      ],
-    }).compile();
-    service = module.get<ProfileService>(ProfileService);
-    jest.clearAllMocks();
-  });
-
-  describe('getProfile', () => {
-    it('returns session info', async () => {
-      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
-      const result = await service.getProfile('s1');
-      expect(result).toHaveProperty('pushname', 'Test Bot');
-    });
-
-    it('throws if session not connected', async () => {
-      mockSessionManagerService.getClient.mockReturnValue(null);
-      await expect(service.getProfile('s1')).rejects.toThrow(
-        BadRequestException,
-      );
-    });
-  });
-
-  describe('setDisplayName', () => {
-    it('sets display name', async () => {
-      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
-      const result = await service.setDisplayName('s1', 'New Name');
-      expect(result).toHaveProperty('updated', true);
-    });
-  });
-
-  describe('setStatus', () => {
-    it('sets status', async () => {
-      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
-      const result = await service.setStatus('s1', 'Available');
-      expect(result).toHaveProperty('updated', true);
-    });
-  });
-
-  describe('setProfilePhoto', () => {
-    it('uploads profile photo', async () => {
-      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
-      const file = {
-        buffer: Buffer.from('fake'),
-        originalname: 'pic.jpg',
-      } as Express.Multer.File;
-      const result = await service.setProfilePhoto('s1', file);
-      expect(result).toHaveProperty('updated', true);
-    });
-  });
-
-  describe('deleteProfilePhoto', () => {
-    it('deletes profile photo', async () => {
-      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
-      const result = await service.deleteProfilePhoto('s1');
-      expect(result).toHaveProperty('deleted', true);
-    });
-  });
-
-  describe('blockContact', () => {
-    it('blocks a contact', async () => {
-      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
-      const result = await service.blockContact('s1', '628123@s.whatsapp.net');
-      expect(result).toHaveProperty('blocked', true);
-    });
-  });
-
-  describe('unblockContact', () => {
-    it('unblocks a contact', async () => {
-      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
-      const result = await service.unblockContact(
-        's1',
-        '628123@s.whatsapp.net',
-      );
-      expect(result).toHaveProperty('unblocked', true);
-    });
-  });
-
-  describe('getBlockedContacts', () => {
-    it('returns list of blocked contacts', async () => {
-      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
-      const result = await service.getBlockedContacts('s1');
-      expect(Array.isArray(result)).toBe(true);
-    });
-  });
-
-  describe('getContactProfilePhoto', () => {
-    it('returns photo URL', async () => {
-      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
-      const result = await service.getContactProfilePhoto(
-        's1',
-        '628123@s.whatsapp.net',
-      );
-      expect(result).toHaveProperty('url');
-    });
-  });
-
-  describe('getAllContacts', () => {
-    it('returns contacts array', async () => {
-      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
-      const result = await service.getAllContacts('s1');
-      expect(Array.isArray(result)).toBe(true);
-    });
-  });
-});
-
-```
----
-
-## File : `test/unit/scheduled-event/scheduled-event.service.spec.ts`
-
-```ts
-import { Test, TestingModule } from '@nestjs/testing';
-import { BadRequestException } from '@nestjs/common';
-import { ScheduledEventService } from '../../../src/modules/scheduled-event/scheduled-event.service';
-import { mockPrismaService } from '../../mocks/prisma.mock';
-import {
-  mockSessionManagerService,
-  mockWhatsappClient,
-} from '../../mocks/whatsapp.mock';
-import { PrismaService } from '../../../src/prisma/prisma.service';
-import { SessionManagerService } from '../../../src/modules/sessions/session-manager.service';
-import { EventResponse } from '../../../src/modules/scheduled-event/dto/respond-event.dto';
-
-describe('ScheduledEventService', () => {
-  let service: ScheduledEventService;
-
-  beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        ScheduledEventService,
-        { provide: PrismaService, useValue: mockPrismaService },
-        { provide: SessionManagerService, useValue: mockSessionManagerService },
-      ],
-    }).compile();
-    service = module.get<ScheduledEventService>(ScheduledEventService);
-    jest.clearAllMocks();
-  });
-
-  describe('send', () => {
-    it('sends scheduled event message', async () => {
-      mockSessionManagerService.getHealthySession.mockResolvedValue('s1');
-      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
-      mockWhatsappClient.sendMessage.mockResolvedValue({
-        id: { _serialized: 'msg-1' },
-      });
-
-      const result = await service.send('u1', {
-        to: '08123456789',
-        title: 'Team Meeting',
-        startTime: new Date(Date.now() + 3600000).toISOString(),
-        description: 'Weekly sync',
-        sessionId: 'auto',
-      });
-
-      expect(result.messageId).toBe('msg-1');
-    });
-
-    it('throws if no session available', async () => {
-      mockSessionManagerService.getHealthySession.mockResolvedValue(null);
-      await expect(
-        service.send('u1', {
-          to: '08123456789',
-          title: 'Meeting',
-          startTime: new Date(Date.now() + 3600000).toISOString(),
-        }),
-      ).rejects.toThrow(BadRequestException);
-    });
-  });
-
-  describe('respond', () => {
-    it('accepts scheduled event', async () => {
-      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
-      const mockMsg = {
-        id: { _serialized: 'msg-1' },
-        acceptScheduledEvent: jest.fn().mockResolvedValue(undefined),
-        declineScheduledEvent: jest.fn().mockResolvedValue(undefined),
-      };
-      mockWhatsappClient.getMessageById.mockResolvedValue(mockMsg);
-
-      const result = await service.respond('u1', {
-        messageId: 'msg-1',
-        sessionId: 's1',
-        response: EventResponse.ACCEPT,
-      });
-
-      expect(result.responded).toBe(true);
-      expect(result.response).toBe(EventResponse.ACCEPT);
-      expect(mockMsg.acceptScheduledEvent).toHaveBeenCalled();
-    });
-
-    it('declines scheduled event', async () => {
-      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
-      const mockMsg = {
-        id: { _serialized: 'msg-1' },
-        acceptScheduledEvent: jest.fn().mockResolvedValue(undefined),
-        declineScheduledEvent: jest.fn().mockResolvedValue(undefined),
-      };
-      mockWhatsappClient.getMessageById.mockResolvedValue(mockMsg);
-
-      const result = await service.respond('u1', {
-        messageId: 'msg-1',
-        sessionId: 's1',
-        response: EventResponse.DECLINE,
-      });
-
-      expect(mockMsg.declineScheduledEvent).toHaveBeenCalled();
-      expect(result.response).toBe(EventResponse.DECLINE);
-    });
-  });
-});
-
-```
----
-
-## File : `test/unit/scheduler/scheduler.service.spec.ts`
-
-```ts
-import { Test, TestingModule } from '@nestjs/testing';
-import { BadRequestException, NotFoundException } from '@nestjs/common';
-import { SchedulerService } from '../../../src/modules/scheduler/scheduler.service';
-import { mockPrismaService } from '../../mocks/prisma.mock';
-import { mockSessionManagerService } from '../../mocks/whatsapp.mock';
-import { PrismaService } from '../../../src/prisma/prisma.service';
-import { SessionManagerService } from '../../../src/modules/sessions/session-manager.service';
-
-describe('SchedulerService', () => {
-  let service: SchedulerService;
-
-  beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        SchedulerService,
-        { provide: PrismaService, useValue: mockPrismaService },
-        { provide: SessionManagerService, useValue: mockSessionManagerService },
-      ],
-    }).compile();
-    service = module.get<SchedulerService>(SchedulerService);
-    jest.clearAllMocks();
-  });
-
-  describe('create', () => {
-    it('creates scheduled message for future time', async () => {
-      const future = new Date(Date.now() + 3600 * 1000).toISOString();
-      mockPrismaService.whatsappSession.findFirst.mockResolvedValue({
-        id: 's1',
-        userId: 'u1',
-      });
-      mockPrismaService.scheduledMessage.create.mockResolvedValue({
-        id: 'sm1',
-        target: '628111',
-        scheduledTime: new Date(future),
-        status: 'pending',
-      });
-      const result = await service.create('u1', {
-        target: '628111',
-        message: 'Hi',
-        sessionId: 's1',
-        scheduledTime: future,
-      });
-      expect(result.status).toBe('pending');
-    });
-
-    it('throws BadRequestException for past time', async () => {
-      const past = new Date(Date.now() - 3600 * 1000).toISOString();
-      await expect(
-        service.create('u1', {
-          target: '628111',
-          message: 'Hi',
-          sessionId: 's1',
-          scheduledTime: past,
-        }),
-      ).rejects.toThrow(BadRequestException);
-    });
-
-    it('throws NotFoundException if session not owned', async () => {
-      const future = new Date(Date.now() + 3600 * 1000).toISOString();
-      mockPrismaService.whatsappSession.findFirst.mockResolvedValue(null);
-      await expect(
-        service.create('u1', {
-          target: '628111',
-          message: 'Hi',
-          sessionId: 's999',
-          scheduledTime: future,
-        }),
-      ).rejects.toThrow(NotFoundException);
-    });
-  });
-
-  describe('cancel', () => {
-    it('cancels pending message', async () => {
-      mockPrismaService.scheduledMessage.findFirst.mockResolvedValue({
-        id: 'sm1',
-        userId: 'u1',
-        status: 'pending',
-      });
-      mockPrismaService.scheduledMessage.update.mockResolvedValue({
-        id: 'sm1',
-        status: 'cancelled',
-      });
-      const result = await service.cancel('u1', 'sm1');
-      expect(result.status).toBe('cancelled');
-    });
-
-    it('throws if message already sent', async () => {
-      mockPrismaService.scheduledMessage.findFirst.mockResolvedValue({
-        id: 'sm1',
-        userId: 'u1',
-        status: 'sent',
-      });
-      await expect(service.cancel('u1', 'sm1')).rejects.toThrow(
-        BadRequestException,
-      );
-    });
-  });
-
-  describe('processScheduled', () => {
-    it('sends due messages and marks as sent', async () => {
-      mockPrismaService.scheduledMessage.findMany.mockResolvedValue([
-        {
-          id: 'sm1',
-          userId: 'u1',
-          sessionId: 's1',
-          target: '628111',
-          message: 'Hi',
-          recurrenceType: 'none',
-          scheduledTime: new Date(),
-        },
-      ]);
-      mockPrismaService.scheduledMessage.update.mockResolvedValue({});
-      mockSessionManagerService.getClient.mockReturnValue({
-        sendMessage: jest.fn().mockResolvedValue({}),
-      });
-      mockSessionManagerService.sendMessage.mockResolvedValue({});
-
-      await service.processScheduled();
-
-      expect(mockPrismaService.scheduledMessage.update).toHaveBeenCalledWith(
-        expect.objectContaining({ data: { status: 'sent' } }),
-      );
-    });
-
-    it('skips message if session not connected', async () => {
-      mockPrismaService.scheduledMessage.findMany.mockResolvedValue([
-        {
-          id: 'sm1',
-          userId: 'u1',
-          sessionId: 's1',
-          target: '628111',
-          message: 'Hi',
-          recurrenceType: 'none',
-          scheduledTime: new Date(),
-        },
-      ]);
-      mockSessionManagerService.getClient.mockReturnValue(null);
-
-      await service.processScheduled();
-
-      expect(mockPrismaService.scheduledMessage.update).not.toHaveBeenCalled();
-    });
-
-    it('creates next recurrence after sending daily message', async () => {
-      mockPrismaService.scheduledMessage.findMany.mockResolvedValue([
-        {
-          id: 'sm1',
-          userId: 'u1',
-          sessionId: 's1',
-          target: '628111',
-          message: 'Hi',
-          recurrenceType: 'daily',
-          scheduledTime: new Date(),
-        },
-      ]);
-      mockPrismaService.scheduledMessage.update.mockResolvedValue({});
-      mockPrismaService.scheduledMessage.create.mockResolvedValue({});
-      mockSessionManagerService.getClient.mockReturnValue({});
-      mockSessionManagerService.sendMessage.mockResolvedValue({});
-
-      await service.processScheduled();
-
-      expect(mockPrismaService.scheduledMessage.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ recurrenceType: 'daily' }),
-        }),
-      );
-    });
-
-    it('marks as failed if send throws', async () => {
-      mockPrismaService.scheduledMessage.findMany.mockResolvedValue([
-        {
-          id: 'sm1',
-          userId: 'u1',
-          sessionId: 's1',
-          target: '628111',
-          message: 'Hi',
-          recurrenceType: 'none',
-          scheduledTime: new Date(),
-        },
-      ]);
-      mockSessionManagerService.getClient.mockReturnValue({});
-      mockSessionManagerService.sendMessage.mockRejectedValue(
-        new Error('Send error'),
-      );
-      mockPrismaService.scheduledMessage.update.mockResolvedValue({});
-
-      await service.processScheduled();
-
-      expect(mockPrismaService.scheduledMessage.update).toHaveBeenCalledWith(
-        expect.objectContaining({ data: { status: 'failed' } }),
-      );
-    });
-  });
-});
-
-```
----
-
-## File : `test/unit/sessions/session-manager.service.spec.ts`
-
-```ts
-import { Test, TestingModule } from "@nestjs/testing";
-import { SessionManagerService } from "../../../src/modules/sessions/session-manager.service";
-import { mockPrismaService } from "../../mocks/prisma.mock";
-import { mockRedisService } from "../../mocks/redis.mock";
-import { PrismaService } from "../../../src/prisma/prisma.service";
-import { RedisService } from "../../../src/redis/redis.service";
-import { GatewayService } from "../../../src/gateway/gateway.service";
-import { NotificationsService } from "../../../src/modules/notifications/notifications.service";
-import { InboxService } from "../../../src/modules/inbox/inbox.service";
-import { AutoReplyEngine } from "../../../src/modules/auto-reply/auto-reply.engine";
-import { WorkflowEngine } from "../../../src/modules/workflow/workflow.engine";
-import { WebhookService } from "../../../src/modules/webhook/webhook.service";
-import { ConfigService } from "@nestjs/config";
-
-describe("SessionManagerService", () => {
-  let service: SessionManagerService;
-
-  const stubs = {
-    gateway: {
-      emit: jest.fn(),
-      emitQr: jest.fn(),
-      emitCode: jest.fn(),
-      emitConnectionUpdate: jest.fn(),
-      emitNewMessage: jest.fn(),
-      emitBroadcastProgress: jest.fn(),
-      emitBroadcastComplete: jest.fn(),
-      emitSystemAlert: jest.fn(),
-    },
-    notifications: { notifySessionDisconnected: jest.fn() },
-    inbox: { saveIncoming: jest.fn().mockResolvedValue(undefined) },
-    autoReply: { process: jest.fn().mockResolvedValue(undefined) },
-    workflow: { process: jest.fn().mockResolvedValue(undefined) },
-    webhook: { dispatch: jest.fn().mockResolvedValue(undefined) },
-    config: {
-      get: jest.fn().mockImplementation((key: string) => {
-        if (key === "whatsapp.maxReconnectRetries") return 10;
-        if (key === "whatsapp.authPath") return "./storage/sessions";
-        if (key === "whatsapp.headless") return true;
-        return null;
-      }),
-    },
-  };
-
-  beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        SessionManagerService,
-        { provide: PrismaService, useValue: mockPrismaService },
-        { provide: RedisService, useValue: mockRedisService },
-        { provide: GatewayService, useValue: stubs.gateway },
-        { provide: NotificationsService, useValue: stubs.notifications },
-        { provide: InboxService, useValue: stubs.inbox },
-        { provide: AutoReplyEngine, useValue: stubs.autoReply },
-        { provide: WorkflowEngine, useValue: stubs.workflow },
-        { provide: WebhookService, useValue: stubs.webhook },
-        { provide: ConfigService, useValue: stubs.config },
-      ],
-    }).compile();
-    service = module.get<SessionManagerService>(SessionManagerService);
-    jest.clearAllMocks();
-  });
-
-  describe("getClient", () => {
-    it("returns null for unknown sessionId", () => {
-      expect(service.getClient("unknown")).toBeNull();
-    });
-  });
-
-  describe("getHealthySession", () => {
-    it("returns session id via round robin", async () => {
-      mockPrismaService.whatsappSession.findMany.mockResolvedValue([
-        { id: "s1" },
-        { id: "s2" },
-      ]);
-      mockRedisService.get.mockResolvedValue(0);
-      mockRedisService.set.mockResolvedValue(undefined);
-
-      const result = await service.getHealthySession("u1");
-      expect(result).toBe("s1");
-    });
-
-    it("returns null when no sessions connected", async () => {
-      mockPrismaService.whatsappSession.findMany.mockResolvedValue([]);
-      const result = await service.getHealthySession("u1");
-      expect(result).toBeNull();
-    });
-  });
-});
-
-```
----
-
-## File : `test/unit/sessions/sessions.service.spec.ts`
-
-```ts
-import { Test, TestingModule } from "@nestjs/testing";
-import { ConflictException, NotFoundException } from "@nestjs/common";
-import { SessionsService } from "../../../src/modules/sessions/sessions.service";
-import { mockPrismaService } from "../../mocks/prisma.mock";
-import { mockSessionManagerService } from "../../mocks/whatsapp.mock";
-import { PrismaService } from "../../../src/prisma/prisma.service";
-import { SessionManagerService } from "../../../src/modules/sessions/session-manager.service";
-import { AuditService } from "../../../src/modules/audit/audit.service";
-import { ConfigService } from "@nestjs/config";
-
-const mockAuditService = { log: jest.fn().mockResolvedValue(undefined) };
-const mockConfigService = {
-  get: jest.fn().mockReturnValue("./storage/sessions"),
-};
-
-describe("SessionsService", () => {
-  let service: SessionsService;
-
-  beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        SessionsService,
-        { provide: PrismaService, useValue: mockPrismaService },
-        { provide: SessionManagerService, useValue: mockSessionManagerService },
-        { provide: AuditService, useValue: mockAuditService },
-        { provide: ConfigService, useValue: mockConfigService },
-      ],
-    }).compile();
-    service = module.get<SessionsService>(SessionsService);
-    jest.clearAllMocks();
-  });
-
-  describe("findAll", () => {
-    it("returns user sessions", async () => {
-      mockPrismaService.whatsappSession.findMany.mockResolvedValue([
-        { id: "s1", sessionName: "CS-1" },
-      ]);
-      const result = await service.findAll("u1");
-      expect(result).toHaveLength(1);
-      expect(mockPrismaService.whatsappSession.findMany).toHaveBeenCalledWith({
-        where: { userId: "u1" },
-        orderBy: { createdAt: "asc" },
-      });
-    });
-  });
-
-  describe("create", () => {
-    it("creates session successfully", async () => {
-      mockPrismaService.whatsappSession.findUnique.mockResolvedValue(null);
-      mockPrismaService.whatsappSession.create.mockResolvedValue({
-        id: "s1",
-        sessionName: "CS-1",
-      });
-
-      const result = await service.create(
-        "u1",
-        "admin@test.com",
-        { name: "CS-1" },
-        "127.0.0.1",
-        "jest",
-      );
-      expect(result.sessionName).toBe("CS-1");
-      expect(mockSessionManagerService.initClient).toHaveBeenCalled();
-    });
-
-    it("throws ConflictException on duplicate session name", async () => {
-      mockPrismaService.whatsappSession.findUnique.mockResolvedValue({
-        id: "existing",
-      });
-      await expect(
-        service.create(
-          "u1",
-          "admin@test.com",
-          { name: "CS-1" },
-          "127.0.0.1",
-          "jest",
-        ),
-      ).rejects.toThrow(ConflictException);
-    });
-  });
-
-  describe("delete", () => {
-    it("deletes session and cleans up", async () => {
-      mockPrismaService.whatsappSession.findFirst.mockResolvedValue({
-        id: "s1",
-        authFolder: "session_u1_CS-1",
-      });
-      mockPrismaService.whatsappSession.delete.mockResolvedValue({});
-
-      await service.delete("u1", "admin@test.com", "s1", "127.0.0.1", "jest");
-      expect(mockPrismaService.whatsappSession.delete).toHaveBeenCalledWith({
-        where: { id: "s1" },
-      });
-    });
-
-    it("throws NotFoundException if session not owned", async () => {
-      mockPrismaService.whatsappSession.findFirst.mockResolvedValue(null);
-      await expect(
-        service.delete("u1", "admin@test.com", "s999", "127.0.0.1", "jest"),
-      ).rejects.toThrow(NotFoundException);
-    });
-  });
-});
-
-```
----
-
-## File : `test/unit/settings/settings.service.spec.ts`
-
-```ts
-import { Test, TestingModule } from '@nestjs/testing';
-import { SettingsService } from '../../../src/modules/settings/settings.service';
-import { mockPrismaService } from '../../mocks/prisma.mock';
-import { PrismaService } from '../../../src/prisma/prisma.service';
-
-const mockAiService = { init: jest.fn() };
-const mockGatewayService = { emitSystemAlert: jest.fn() };
-
-describe('SettingsService', () => {
-  let service: SettingsService;
-
-  beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        SettingsService,
-        { provide: PrismaService, useValue: mockPrismaService },
-        { provide: 'AiService', useValue: mockAiService },
-        { provide: 'GatewayService', useValue: mockGatewayService },
-      ],
-    })
-      .overrideProvider('AiService')
-      .useValue(mockAiService)
-      .overrideProvider('GatewayService')
-      .useValue(mockGatewayService)
-      .compile();
-
-    service = module.get<SettingsService>(SettingsService);
-    jest.clearAllMocks();
-  });
-
-  describe('getUserSettings', () => {
-    it('masks gemini API key', async () => {
-      mockPrismaService.userSetting.findUnique.mockResolvedValue({
-        userId: 'u1',
-        geminiApiKey: 'abcdefghijklmnop',
-        geminiConfidenceThreshold: 0.6,
-      });
-      const result = await service.getUserSettings('u1');
-      expect(result.geminiApiKey).toBe('****mnop');
-    });
-
-    it('returns null if no settings', async () => {
-      mockPrismaService.userSetting.findUnique.mockResolvedValue(null);
-      const result = await service.getUserSettings('u1');
-      expect(result).toBeNull();
-    });
-  });
-
-  describe('updateUserSettings', () => {
-    it('calls ai.init when geminiApiKey is updated', async () => {
-      mockPrismaService.userSetting.upsert.mockResolvedValue({
-        userId: 'u1',
-        geminiApiKey: 'new-key',
-      });
-      await service.updateUserSettings('u1', { geminiApiKey: 'new-key' });
-      expect(mockAiService.init).toHaveBeenCalledWith('new-key');
-    });
-  });
-
-  describe('getGlobalSettings', () => {
-    it('returns settings as key-value object', async () => {
-      mockPrismaService.globalSetting.findMany.mockResolvedValue([
-        { key: 'maintenanceMode', value: 'false' },
-        { key: 'defaultDailyMessageLimit', value: '1000' },
-      ]);
-      const result = await service.getGlobalSettings();
-      expect(result.maintenanceMode).toBe('false');
-      expect(result.defaultDailyMessageLimit).toBe('1000');
-    });
-  });
-
-  describe('setMaintenanceMode', () => {
-    it('sets maintenance mode to true', async () => {
-      mockPrismaService.globalSetting.upsert.mockResolvedValue({});
-      const result = await service.setMaintenanceMode(true);
-      expect(result).toHaveProperty('maintenanceMode', true);
-      expect(mockPrismaService.globalSetting.upsert).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { key: 'maintenanceMode' },
-          update: { value: 'true' },
-        }),
-      );
-    });
-  });
-
-  describe('isMaintenanceMode', () => {
-    it('returns true when maintenance mode is active', async () => {
-      mockPrismaService.globalSetting.findUnique.mockResolvedValue({
-        key: 'maintenanceMode',
-        value: 'true',
-      });
-      const result = await service.isMaintenanceMode();
-      expect(result).toBe(true);
-    });
-
-    it('returns false when maintenance mode is inactive', async () => {
-      mockPrismaService.globalSetting.findUnique.mockResolvedValue({
-        key: 'maintenanceMode',
-        value: 'false',
-      });
-      const result = await service.isMaintenanceMode();
-      expect(result).toBe(false);
-    });
-  });
-
-  describe('broadcastAnnouncement', () => {
-    it('emits system alert to all active users', async () => {
-      mockPrismaService.user.findMany.mockResolvedValue([
-        { id: 'u1' },
-        { id: 'u2' },
-        { id: 'u3' },
-      ]);
-      const result = await service.broadcastAnnouncement(
-        'Server maintenance tonight',
-        'admin1',
-      );
-      expect(result.sent).toBe(3);
-      expect(mockGatewayService.emitSystemAlert).toHaveBeenCalledTimes(3);
-    });
-  });
-});
-
-```
----
-
-## File : `test/unit/utils/hash.util.spec.ts`
-
-```ts
-import { sha256, generateHexToken } from '../../../src/common/utils/hash.util';
-
-describe('hash.util', () => {
-  describe('sha256', () => {
-    it('returns consistent 64-char hex string', () => {
-      const hash = sha256('test-input');
-      expect(hash).toHaveLength(64);
-      expect(hash).toMatch(/^[a-f0-9]+$/);
-    });
-
-    it('returns same hash for same input', () => {
-      expect(sha256('abc')).toBe(sha256('abc'));
-    });
-
-    it('returns different hash for different inputs', () => {
-      expect(sha256('abc')).not.toBe(sha256('def'));
-    });
-
-    it('handles empty string', () => {
-      const hash = sha256('');
-      expect(hash).toHaveLength(64);
-    });
-  });
-
-  describe('generateHexToken', () => {
-    it('returns 48-char hex string by default', () => {
-      const token = generateHexToken();
-      expect(token).toHaveLength(48);
-      expect(token).toMatch(/^[a-f0-9]+$/);
-    });
-
-    it('returns custom length token', () => {
-      const token = generateHexToken(10);
-      expect(token).toHaveLength(20);
-    });
-
-    it('returns unique tokens each time', () => {
-      expect(generateHexToken()).not.toBe(generateHexToken());
-    });
-  });
-});
-
-```
----
-
-## File : `test/unit/utils/mime-validator.spec.ts`
-
-```ts
-import { BadRequestException } from '@nestjs/common';
-import { validateMimeType } from '../../../src/common/utils/mime-validator.util';
-
-jest.mock('file-type', () => ({ fileTypeFromBuffer: jest.fn() }));
-
-describe('mime-validator.util', () => {
-  let fileTypeFromBuffer: jest.Mock;
-
-  beforeEach(async () => {
-    jest.resetModules();
-    const ft = await import('file-type');
-    fileTypeFromBuffer = ft.fileTypeFromBuffer as jest.Mock;
-    jest.clearAllMocks();
-  });
-
-  it('returns mime type for valid image/jpeg', async () => {
-    fileTypeFromBuffer.mockResolvedValue({ mime: 'image/jpeg' });
-    const result = await validateMimeType(Buffer.from('fake'));
-    expect(result).toBe('image/jpeg');
-  });
-
-  it('returns mime type for valid application/pdf', async () => {
-    fileTypeFromBuffer.mockResolvedValue({ mime: 'application/pdf' });
-    const result = await validateMimeType(Buffer.from('fake'));
-    expect(result).toBe('application/pdf');
-  });
-
-  it('returns mime type for valid video/mp4', async () => {
-    fileTypeFromBuffer.mockResolvedValue({ mime: 'video/mp4' });
-    const result = await validateMimeType(Buffer.from('fake'));
-    expect(result).toBe('video/mp4');
-  });
-
-  it('throws BadRequestException for disallowed mime type', async () => {
-    fileTypeFromBuffer.mockResolvedValue({ mime: 'application/x-msdownload' });
-    await expect(validateMimeType(Buffer.from('fake'))).rejects.toThrow(
-      BadRequestException,
-    );
-  });
-
-  it('throws BadRequestException when file type cannot be determined', async () => {
-    fileTypeFromBuffer.mockResolvedValue(null);
-    await expect(validateMimeType(Buffer.from('fake'))).rejects.toThrow(
-      BadRequestException,
-    );
-  });
-});
-
-```
----
-
-## File : `test/unit/utils/phone-normalizer.spec.ts`
-
-```ts
-import {
-  normalizePhone,
-  toJid,
-  isGroupJid,
-} from '../../../src/common/utils/phone-normalizer.util';
-import { BadRequestException } from '@nestjs/common';
-
-describe('phone-normalizer.util', () => {
-  describe('normalizePhone', () => {
-    it('converts 08xx to 628xx', () => {
-      expect(normalizePhone('081234567890')).toBe('6281234567890');
-    });
-
-    it('strips non-digit characters', () => {
-      expect(normalizePhone('+62-812-3456-7890')).toBe('6281234567890');
-    });
-
-    it('keeps number already starting with 62', () => {
-      expect(normalizePhone('6281234567890')).toBe('6281234567890');
-    });
-
-    it('strips leading +', () => {
-      expect(normalizePhone('+6281234567890')).toBe('6281234567890');
-    });
-
-    it('throws BadRequestException for empty string', () => {
-      expect(() => normalizePhone('')).toThrow(BadRequestException);
-    });
-
-    it('throws BadRequestException for too-short number', () => {
-      expect(() => normalizePhone('123')).toThrow(BadRequestException);
-    });
-
-    it('handles international numbers without country code prefix', () => {
-      expect(normalizePhone('081234567890')).toMatch(/^62/);
-    });
-  });
-
-  describe('toJid', () => {
-    it('returns JID with @s.whatsapp.net suffix', () => {
-      expect(toJid('081234567890')).toBe('6281234567890@s.whatsapp.net');
-    });
-
-    it('handles number already in 62 format', () => {
-      expect(toJid('6281234567890')).toBe('6281234567890@s.whatsapp.net');
-    });
-  });
-
-  describe('isGroupJid', () => {
-    it('returns true for group JID', () => {
-      expect(isGroupJid('120363000000@g.us')).toBe(true);
-    });
-
-    it('returns false for regular JID', () => {
-      expect(isGroupJid('6281234567890@s.whatsapp.net')).toBe(false);
-    });
-  });
-});
-
-```
----
-
-## File : `test/unit/webhook/webhook.processor.spec.ts`
-
-```ts
-import { Test, TestingModule } from '@nestjs/testing';
-import { WebhookProcessor } from '../../../src/modules/webhook/processors/webhook.processor';
-import { mockPrismaService } from '../../mocks/prisma.mock';
-import { PrismaService } from '../../../src/prisma/prisma.service';
-
-jest.mock('axios');
-import axios from 'axios';
-const mockedAxios = axios as jest.Mocked<typeof axios>;
-
-describe('WebhookProcessor', () => {
-  let processor: WebhookProcessor;
-
-  beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        WebhookProcessor,
-        { provide: PrismaService, useValue: mockPrismaService },
-      ],
-    }).compile();
-    processor = module.get<WebhookProcessor>(WebhookProcessor);
-    jest.clearAllMocks();
-  });
-
-  const makeJob = (overrides = {}) =>
-    ({
-      data: {
-        userId: 'u1',
-        url: 'https://example.com/webhook',
-        payload: JSON.stringify({ event: 'new_message', text: 'Hello' }),
-        headers: { 'Content-Type': 'application/json' },
-      },
-      attemptsMade: 0,
-      ...overrides,
-    }) as any;
-
-  it('sends POST to webhook URL successfully', async () => {
-    mockedAxios.post = jest.fn().mockResolvedValue({ status: 200 });
-    await expect(processor.process(makeJob())).resolves.not.toThrow();
-    expect(mockedAxios.post).toHaveBeenCalledWith(
-      'https://example.com/webhook',
-      { event: 'new_message', text: 'Hello' },
-      expect.objectContaining({ timeout: 10000 }),
-    );
-  });
-
-  it('throws with delay on failure to trigger retry', async () => {
-    mockedAxios.post = jest
-      .fn()
-      .mockRejectedValue(new Error('Connection refused'));
-    await expect(processor.process(makeJob())).rejects.toThrow(
-      'Connection refused',
-    );
-  });
-
-  it('increases retry delay exponentially based on attempt', async () => {
-    mockedAxios.post = jest.fn().mockRejectedValue(new Error('Timeout'));
-    try {
-      await processor.process(makeJob({ attemptsMade: 2 }));
-    } catch (e) {
-      expect(e.delay).toBe(900 * 1000);
-    }
-  });
-
-  it('uses last retry delay when attempts exceed max', async () => {
-    mockedAxios.post = jest.fn().mockRejectedValue(new Error('Timeout'));
-    try {
-      await processor.process(makeJob({ attemptsMade: 99 }));
-    } catch (e) {
-      expect(e.delay).toBe(21600 * 1000);
-    }
-  });
-});
-
-```
----
-
-## File : `test/unit/workflow/workflow.engine.spec.ts`
-
-```ts
-import { Test, TestingModule } from "@nestjs/testing";
-import { WorkflowEngine } from "../../../src/modules/workflow/workflow.engine";
-import { WorkflowService } from "../../../src/modules/workflow/workflow.service";
-import { mockPrismaService } from "../../mocks/prisma.mock";
-import { mockSessionManagerService } from "../../mocks/whatsapp.mock";
-import { PrismaService } from "../../../src/prisma/prisma.service";
-import { SessionManagerService } from "../../../src/modules/sessions/session-manager.service";
-
-const mockWorkflowService = { getActive: jest.fn() };
-
-describe("WorkflowEngine", () => {
-  let engine: WorkflowEngine;
-
-  beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        WorkflowEngine,
-        { provide: PrismaService, useValue: mockPrismaService },
-        { provide: SessionManagerService, useValue: mockSessionManagerService },
-        { provide: WorkflowService, useValue: mockWorkflowService },
-      ],
-    }).compile();
-    engine = module.get<WorkflowEngine>(WorkflowEngine);
-    jest.clearAllMocks();
-  });
-
-  it("fires send_message node on exact match", async () => {
-    mockWorkflowService.getActive.mockResolvedValue([
-      {
-        id: "wf1",
-        triggerCondition: { keyword: "hello", matchType: "exact" },
-        nodes: [
-          { id: "n1", type: "send_message", config: { message: "Hi there!" } },
-        ],
-      },
-    ]);
-    mockPrismaService.workflowLog.create.mockResolvedValue({});
-    mockPrismaService.workflow.update.mockResolvedValue({});
-
-    await engine.process("u1", "s1", "628111@s.whatsapp.net", "hello");
-    expect(mockSessionManagerService.sendMessage).toHaveBeenCalledWith(
-      "s1",
-      "628111@s.whatsapp.net",
-      "Hi there!",
-    );
-  });
-
-  it("skips workflow if trigger does not match", async () => {
-    mockWorkflowService.getActive.mockResolvedValue([
-      {
-        id: "wf1",
-        triggerCondition: { keyword: "start", matchType: "exact" },
-        nodes: [
-          { id: "n1", type: "send_message", config: { message: "Started!" } },
-        ],
-      },
-    ]);
-
-    await engine.process("u1", "s1", "628111@s.whatsapp.net", "hello");
-    expect(mockSessionManagerService.sendMessage).not.toHaveBeenCalled();
-  });
-
-  it("fires add_tag node and creates contact if not exists", async () => {
-    mockWorkflowService.getActive.mockResolvedValue([
-      {
-        id: "wf1",
-        triggerCondition: { keyword: "join", matchType: "contains" },
-        nodes: [{ id: "n1", type: "add_tag", config: { tag: "lead" } }],
-      },
-    ]);
-    mockPrismaService.contact.findFirst.mockResolvedValue(null);
-    mockPrismaService.contact.create.mockResolvedValue({});
-    mockPrismaService.workflowLog.create.mockResolvedValue({});
-    mockPrismaService.workflow.update.mockResolvedValue({});
-
-    await engine.process("u1", "s1", "628111@s.whatsapp.net", "please join me");
-    expect(mockPrismaService.contact.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ tag: "lead" }),
-      }),
-    );
-  });
-});
-
-```
----
-
-## File : `test/unit/workspace/workspace.service.spec.ts`
-
-```ts
-import { Test, TestingModule } from '@nestjs/testing';
-import { NotFoundException, ForbiddenException } from '@nestjs/common';
-import { WorkspaceService } from '../../../src/modules/workspace/workspace.service';
-import { mockPrismaService } from '../../mocks/prisma.mock';
-import { PrismaService } from '../../../src/prisma/prisma.service';
-import { AuditService } from '../../../src/modules/audit/audit.service';
-
-const mockAuditService = { log: jest.fn().mockResolvedValue(undefined) };
-
-describe('WorkspaceService', () => {
-  let service: WorkspaceService;
-
-  beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        WorkspaceService,
-        { provide: PrismaService, useValue: mockPrismaService },
-        { provide: AuditService, useValue: mockAuditService },
-      ],
-    }).compile();
-    service = module.get<WorkspaceService>(WorkspaceService);
-    jest.clearAllMocks();
-  });
-
-  describe('create', () => {
-    it('creates workspace with owner as member', async () => {
-      mockPrismaService.workspace.create.mockResolvedValue({
-        id: 'ws1',
-        name: 'My Workspace',
-        ownerId: 'u1',
-        members: [{ userId: 'u1', role: 'owner' }],
-      });
-      const result = await service.create(
-        'u1',
-        'u1@test.com',
-        'My Workspace',
-        '127.0.0.1',
-        'jest',
-      );
-      expect(result.name).toBe('My Workspace');
-      expect(mockAuditService.log).toHaveBeenCalledWith(
-        expect.objectContaining({ action: 'CREATE_WORKSPACE' }),
-      );
-    });
-  });
-
-  describe('findAll', () => {
-    it('returns workspaces the user belongs to', async () => {
-      mockPrismaService.workspace.findMany.mockResolvedValue([
-        { id: 'ws1', name: 'Team', members: [] },
-      ]);
-      const result = await service.findAll('u1');
-      expect(result).toHaveLength(1);
-    });
-  });
-
-  describe('invite', () => {
-    it('invites user to workspace', async () => {
-      mockPrismaService.workspace.findFirst.mockResolvedValue({
-        id: 'ws1',
-        ownerId: 'u1',
-      });
-      mockPrismaService.user.findUnique.mockResolvedValue({
-        id: 'u2',
-        email: 'u2@test.com',
-      });
-      mockPrismaService.workspaceMember.upsert.mockResolvedValue({
-        id: 'wm1',
-        userId: 'u2',
-        role: 'member',
-      });
-      const result = await service.invite(
-        'u1',
-        'u1@test.com',
-        'ws1',
-        'u2@test.com',
-        '127.0.0.1',
-        'jest',
-      );
-      expect(result.role).toBe('member');
-      expect(mockAuditService.log).toHaveBeenCalledWith(
-        expect.objectContaining({ action: 'INVITE_MEMBER' }),
-      );
-    });
-
-    it('throws NotFoundException if workspace not owned', async () => {
-      mockPrismaService.workspace.findFirst.mockResolvedValue(null);
-      await expect(
-        service.invite(
-          'u1',
-          'u1@test.com',
-          'ws1',
-          'u2@test.com',
-          '127.0.0.1',
-          'jest',
-        ),
-      ).rejects.toThrow(NotFoundException);
-    });
-
-    it('throws NotFoundException if invited user does not exist', async () => {
-      mockPrismaService.workspace.findFirst.mockResolvedValue({
-        id: 'ws1',
-        ownerId: 'u1',
-      });
-      mockPrismaService.user.findUnique.mockResolvedValue(null);
-      await expect(
-        service.invite(
-          'u1',
-          'u1@test.com',
-          'ws1',
-          'nobody@test.com',
-          '127.0.0.1',
-          'jest',
-        ),
-      ).rejects.toThrow(NotFoundException);
-    });
-  });
-
-  describe('updateMemberPermission', () => {
-    it('updates member role', async () => {
-      mockPrismaService.workspace.findFirst.mockResolvedValue({
-        id: 'ws1',
-        ownerId: 'u1',
-      });
-      mockPrismaService.workspaceMember.updateMany.mockResolvedValue({
-        count: 1,
-      });
-      const result = await service.updateMemberPermission('u1', 'ws1', 'u2', {
-        role: 'admin' as any,
-      });
-      expect(result.count).toBe(1);
-    });
-
-    it('throws ForbiddenException if trying to change own role', async () => {
-      mockPrismaService.workspace.findFirst.mockResolvedValue({
-        id: 'ws1',
-        ownerId: 'u1',
-      });
-      await expect(
-        service.updateMemberPermission('u1', 'ws1', 'u1', {
-          role: 'member' as any,
-        }),
-      ).rejects.toThrow(ForbiddenException);
-    });
-
-    it('throws NotFoundException if workspace not owned', async () => {
-      mockPrismaService.workspace.findFirst.mockResolvedValue(null);
-      await expect(
-        service.updateMemberPermission('u1', 'ws1', 'u2', {
-          role: 'member' as any,
-        }),
-      ).rejects.toThrow(NotFoundException);
-    });
-  });
-
-  describe('removeMember', () => {
-    it('removes member from workspace', async () => {
-      mockPrismaService.workspace.findFirst.mockResolvedValue({
-        id: 'ws1',
-        ownerId: 'u1',
-      });
-      mockPrismaService.workspaceMember.deleteMany.mockResolvedValue({
-        count: 1,
-      });
-      await service.removeMember(
-        'u1',
-        'u1@test.com',
-        'ws1',
-        'u2',
-        '127.0.0.1',
-        'jest',
-      );
-      expect(mockPrismaService.workspaceMember.deleteMany).toHaveBeenCalledWith(
-        {
-          where: { workspaceId: 'ws1', userId: 'u2' },
-        },
-      );
-    });
-
-    it('throws ForbiddenException when removing self', async () => {
-      mockPrismaService.workspace.findFirst.mockResolvedValue({
-        id: 'ws1',
-        ownerId: 'u1',
-      });
-      await expect(
-        service.removeMember(
-          'u1',
-          'u1@test.com',
-          'ws1',
-          'u1',
-          '127.0.0.1',
-          'jest',
-        ),
-      ).rejects.toThrow(ForbiddenException);
-    });
-  });
-});
-
-```
----
-
-## File : `test/app.e2e-spec.ts`
-
-```ts
-import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication, ValidationPipe } from '@nestjs/common';
-import * as request from 'supertest';
-import { AppModule } from '../src/app.module';
-
-describe('AppModule (e2e)', () => {
-  let app: INestApplication;
-
-  beforeAll(async () => {
-    const moduleFixture: TestingModule = await Test.createTestingModule({
-      imports: [AppModule],
-    }).compile();
-    app = moduleFixture.createNestApplication();
-    app.useGlobalPipes(
-      new ValidationPipe({ whitelist: true, transform: true }),
-    );
-    app.setGlobalPrefix('api');
-    app.enableVersioning({ type: 1 as any, defaultVersion: '1' });
-    await app.init();
-  });
-
-  afterAll(async () => {
-    await app.close();
-  });
-
-  it('GET /api/v1/health returns ok', async () => {
-    const res = await request(app.getHttpServer()).get('/api/v1/health');
-    expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ status: 'ok' });
-  });
-
-  it('GET unknown route returns 404', async () => {
-    const res = await request(app.getHttpServer()).get('/api/v1/unknown-route');
-    expect(res.status).toBe(404);
-  });
-
-  it('protected routes return 401 without auth', async () => {
-    const routes = [
-      { method: 'get', path: '/api/v1/sessions' },
-      { method: 'get', path: '/api/v1/messages/logs' },
-      { method: 'get', path: '/api/v1/contacts' },
-      { method: 'get', path: '/api/v1/broadcast/campaigns' },
-      { method: 'get', path: '/api/v1/auto-reply' },
-      { method: 'get', path: '/api/v1/workflows' },
-      { method: 'get', path: '/api/v1/drip-campaigns' },
-      { method: 'get', path: '/api/v1/scheduler' },
-      { method: 'get', path: '/api/v1/templates' },
-      { method: 'get', path: '/api/v1/keys' },
-      { method: 'get', path: '/api/v1/settings/me' },
-      { method: 'get', path: '/api/v1/inbox' },
-      { method: 'get', path: '/api/v1/analytics/dashboard' },
-      { method: 'get', path: '/api/v1/profile/s1' },
-      { method: 'get', path: '/api/v1/workspaces' },
-      { method: 'get', path: '/api/v1/tiers' },
-      { method: 'get', path: '/api/v1/calls' },
-      { method: 'get', path: '/api/v1/audit' },
-    ];
-
-    for (const route of routes) {
-      const res = await (request(app.getHttpServer()) as any)[route.method](
-        route.path,
-      );
-      expect(res.status).toBe(401);
-    }
-  });
-
-  it('POST endpoints return 401 without auth', async () => {
-    const routes = [
-      {
-        path: '/api/v1/messages/send',
-        body: { to: '08123456789', message: 'Hi' },
-      },
-      { path: '/api/v1/sessions', body: { name: 'test' } },
-      { path: '/api/v1/broadcast', body: { name: 'T', message: 'H' } },
-      {
-        path: '/api/v1/auto-reply',
-        body: { keyword: 'hi', response: 'hello', matchType: 'exact' },
-      },
-      {
-        path: '/api/v1/workflows',
-        body: { name: 'W', triggerCondition: {}, nodes: [] },
-      },
-      { path: '/api/v1/settings/maintenance', body: { enabled: true } },
-      { path: '/api/v1/settings/announcement', body: { message: 'Test' } },
-    ];
-
-    for (const route of routes) {
-      const res = await request(app.getHttpServer())
-        .post(route.path)
-        .send(route.body);
-      expect(res.status).toBe(401);
-    }
-  });
-
-  it('validation returns 400 on invalid body', async () => {
-    const res = await request(app.getHttpServer())
-      .post('/api/v1/auth/2fa/verify')
-      .send({ tempToken: 123, code: 'toolong123456' });
-    expect(res.status).toBe(400);
-  });
-});
-
-```
----
-
-## File : `test/integration/auth.integration.spec.ts`
-
-```ts
-import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication, ValidationPipe } from '@nestjs/common';
-import * as request from 'supertest';
-import { AppModule } from '../../src/app.module';
-
-describe('Auth (integration)', () => {
-  let app: INestApplication;
-
-  beforeAll(async () => {
-    const moduleFixture: TestingModule = await Test.createTestingModule({
-      imports: [AppModule],
-    }).compile();
-    app = moduleFixture.createNestApplication();
-    app.useGlobalPipes(
-      new ValidationPipe({ whitelist: true, transform: true }),
-    );
-    app.setGlobalPrefix('api');
-    app.enableVersioning({ type: 1 as any, defaultVersion: '1' });
-    await app.init();
-  });
-
-  afterAll(async () => {
-    await app.close();
-  });
-
-  it('GET /api/v1/health returns ok', async () => {
-    const res = await request(app.getHttpServer()).get('/api/v1/health');
-    expect(res.status).toBe(200);
-    expect(res.body.status).toBe('ok');
-  });
-
-  it('GET /api/v1/auth/me returns 401 without auth', async () => {
-    const res = await request(app.getHttpServer()).get('/api/v1/auth/me');
-    expect(res.status).toBe(401);
-  });
-
-  it('POST /api/v1/auth/2fa/verify returns 401 with invalid token', async () => {
-    const res = await request(app.getHttpServer())
-      .post('/api/v1/auth/2fa/verify')
-      .send({ tempToken: 'invalid-token', code: '123456' });
-    expect(res.status).toBe(401);
-  });
-
-  it('POST /api/v1/auth/2fa/verify returns 400 with missing fields', async () => {
-    const res = await request(app.getHttpServer())
-      .post('/api/v1/auth/2fa/verify')
-      .send({});
-    expect(res.status).toBe(400);
-  });
-
-  it('POST /api/v1/auth/logout returns 401 without auth', async () => {
-    const res = await request(app.getHttpServer()).post('/api/v1/auth/logout');
-    expect(res.status).toBe(401);
-  });
-
-  it('POST /api/v1/auth/2fa/backup-codes/regenerate returns 401 without auth', async () => {
-    const res = await request(app.getHttpServer())
-      .post('/api/v1/auth/2fa/backup-codes/regenerate')
-      .send({ code: '123456' });
-    expect(res.status).toBe(401);
-  });
-});
-
-```
----
-
-## File : `test/integration/messages.integration.spec.ts`
-
-```ts
-import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication, ValidationPipe } from '@nestjs/common';
-import * as request from 'supertest';
-import { AppModule } from '../../src/app.module';
-
-describe('Messages (integration)', () => {
-  let app: INestApplication;
-
-  beforeAll(async () => {
-    const moduleFixture: TestingModule = await Test.createTestingModule({
-      imports: [AppModule],
-    }).compile();
-    app = moduleFixture.createNestApplication();
-    app.useGlobalPipes(
-      new ValidationPipe({ whitelist: true, transform: true }),
-    );
-    app.setGlobalPrefix('api');
-    app.enableVersioning({ type: 1 as any, defaultVersion: '1' });
-    await app.init();
-  });
-
-  afterAll(async () => {
-    await app.close();
-  });
-
-  it('POST /api/v1/messages/send returns 401 without auth', async () => {
-    const res = await request(app.getHttpServer())
-      .post('/api/v1/messages/send')
-      .send({ to: '08123456789', message: 'Hello' });
-    expect(res.status).toBe(401);
-  });
-
-  it('POST /api/v1/messages/send-contact returns 401 without auth', async () => {
-    const res = await request(app.getHttpServer())
-      .post('/api/v1/messages/send-contact')
-      .send({ to: '08123456789', contacts: ['08111111111'] });
-    expect(res.status).toBe(401);
-  });
-
-  it('GET /api/v1/messages/logs returns 401 without auth', async () => {
-    const res = await request(app.getHttpServer()).get('/api/v1/messages/logs');
-    expect(res.status).toBe(401);
-  });
-
-  it('POST /api/v1/messages/s1/messages/msg1/forward returns 401 without auth', async () => {
-    const res = await request(app.getHttpServer())
-      .post('/api/v1/messages/s1/messages/msg1/forward')
-      .send({ to: '08123456789' });
-    expect(res.status).toBe(401);
-  });
-
-  it('POST /api/v1/messages/s1/messages/msg1/pin returns 401 without auth', async () => {
-    const res = await request(app.getHttpServer())
-      .post('/api/v1/messages/s1/messages/msg1/pin')
-      .send({});
-    expect(res.status).toBe(401);
-  });
-});
-
-```
----
-
-## File : `test/integration/profile.integration.spec.ts`
-
-```ts
-import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication, ValidationPipe } from '@nestjs/common';
-import * as request from 'supertest';
-import { AppModule } from '../../src/app.module';
-
-describe('Profile (integration)', () => {
-  let app: INestApplication;
-
-  beforeAll(async () => {
-    const moduleFixture: TestingModule = await Test.createTestingModule({
-      imports: [AppModule],
-    }).compile();
-    app = moduleFixture.createNestApplication();
-    app.useGlobalPipes(
-      new ValidationPipe({ whitelist: true, transform: true }),
-    );
-    app.setGlobalPrefix('api');
-    app.enableVersioning({ type: 1 as any, defaultVersion: '1' });
-    await app.init();
-  });
-
-  afterAll(async () => {
-    await app.close();
-  });
-
-  it('GET /api/v1/profile/s1 returns 401 without auth', async () => {
-    const res = await request(app.getHttpServer()).get('/api/v1/profile/s1');
-    expect(res.status).toBe(401);
-  });
-
-  it('POST /api/v1/profile/s1/display-name returns 401 without auth', async () => {
-    const res = await request(app.getHttpServer())
-      .post('/api/v1/profile/s1/display-name')
-      .send({ name: 'Bot' });
-    expect(res.status).toBe(401);
-  });
-
-  it('POST /api/v1/profile/s1/contacts/628123/block returns 401 without auth', async () => {
-    const res = await request(app.getHttpServer()).post(
-      '/api/v1/profile/s1/contacts/628123/block',
-    );
-    expect(res.status).toBe(401);
-  });
-});
-
-```
----
-
-## File : `test/integration/sessions.integration.spec.ts`
-
-```ts
-import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication, ValidationPipe } from '@nestjs/common';
-import * as request from 'supertest';
-import { AppModule } from '../../src/app.module';
-
-describe('Sessions (integration)', () => {
-  let app: INestApplication;
-
-  beforeAll(async () => {
-    const moduleFixture: TestingModule = await Test.createTestingModule({
-      imports: [AppModule],
-    }).compile();
-    app = moduleFixture.createNestApplication();
-    app.useGlobalPipes(
-      new ValidationPipe({ whitelist: true, transform: true }),
-    );
-    app.setGlobalPrefix('api');
-    app.enableVersioning({ type: 1 as any, defaultVersion: '1' });
-    await app.init();
-  });
-
-  afterAll(async () => {
-    await app.close();
-  });
-
-  it('GET /api/v1/sessions returns 401 without auth', async () => {
-    const res = await request(app.getHttpServer()).get('/api/v1/sessions');
-    expect(res.status).toBe(401);
-  });
-
-  it('POST /api/v1/sessions returns 401 without auth', async () => {
-    const res = await request(app.getHttpServer())
-      .post('/api/v1/sessions')
-      .send({ name: 'test' });
-    expect(res.status).toBe(401);
-  });
-
-  it('POST /api/v1/sessions/s1/reconnect returns 401 without auth', async () => {
-    const res = await request(app.getHttpServer()).post(
-      '/api/v1/sessions/s1/reconnect',
-    );
-    expect(res.status).toBe(401);
-  });
-
-  it('DELETE /api/v1/sessions/s1 returns 401 without auth', async () => {
-    const res = await request(app.getHttpServer()).delete(
-      '/api/v1/sessions/s1',
-    );
-    expect(res.status).toBe(401);
-  });
-});
 
 ```
 ---

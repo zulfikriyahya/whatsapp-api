@@ -239,6 +239,7 @@ FILES=(
   "src/modules/notifications/notifications.module.ts"
   "src/modules/notifications/notifications.service.ts"
 
+  "src/modules/profile/dto/update-profile-wa.dto.ts"
   "src/modules/profile/profile.controller.ts"
   "src/modules/profile/profile.module.ts"
   "src/modules/profile/profile.service.ts"
@@ -326,40 +327,6 @@ FILES=(
 
   "src/redis/redis.module.ts"
   "src/redis/redis.service.ts"
-
-  "test/mocks/prisma.mock.ts"
-  "test/mocks/redis.mock.ts"
-  "test/mocks/whatsapp.mock.ts"
-
-  "test/unit/auth/auth.service.spec.ts"
-  "test/unit/auto-reply/auto-reply.engine.spec.ts"
-  "test/unit/broadcast/broadcast.processor.spec.ts"
-  "test/unit/broadcast/broadcast.service.spec.ts"
-  "test/unit/broadcast-list/broadcast-list.service.spec.ts"
-  "test/unit/contacts/contacts.service.spec.ts"
-  "test/unit/customer-note/customer-note.service.spec.ts"
-  "test/unit/drip/drip.manager.spec.ts"
-  "test/unit/groups/groups.service.spec.ts"
-  "test/unit/messages/messages.service.spec.ts"
-  "test/unit/middlewares/maintenance.middleware.spec.ts"
-  "test/unit/profile/profile.service.spec.ts"
-  "test/unit/scheduled-event/scheduled-event.service.spec.ts"
-  "test/unit/scheduler/scheduler.service.spec.ts"
-  "test/unit/sessions/session-manager.service.spec.ts"
-  "test/unit/sessions/sessions.service.spec.ts"
-  "test/unit/settings/settings.service.spec.ts"
-  "test/unit/utils/hash.util.spec.ts"
-  "test/unit/utils/mime-validator.spec.ts"
-  "test/unit/utils/phone-normalizer.spec.ts"
-  "test/unit/webhook/webhook.processor.spec.ts"
-  "test/unit/workflow/workflow.engine.spec.ts"
-  "test/unit/workspace/workspace.service.spec.ts"
-
-  "test/app.e2e-spec.ts"
-  "test/integration/auth.integration.spec.ts"
-  "test/integration/messages.integration.spec.ts"
-  "test/integration/profile.integration.spec.ts"
-  "test/integration/sessions.integration.spec.ts"
 )
 
 FOUND=0
