@@ -252,7 +252,7 @@ Isi konfigurasi Nginx:
 ```nginx
 server {
     listen 80;
-    server_name DOMAIN_ANDA;
+    server_name wgw.local;
 
     client_max_body_size 55M;
 

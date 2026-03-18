@@ -3,6 +3,8 @@ import {
   Logger,
   OnModuleInit,
   OnModuleDestroy,
+  Inject,
+  forwardRef,
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../../prisma/prisma.service";
@@ -19,12 +21,23 @@ import { SessionStatus } from "@prisma/client";
 import { NotFoundException, BadRequestException } from "@nestjs/common";
 import { Client, LocalAuth, Message, MessageMedia } from "whatsapp-web.js";
 import * as path from "path";
-
 @Injectable()
 export class SessionManagerService implements OnModuleInit, OnModuleDestroy {
   private logger = new Logger("SessionManagerService");
   private clients = new Map<string, Client>();
   private reconnectTimers = new Map<string, NodeJS.Timeout>();
+
+  // constructor(
+  //   private prisma: PrismaService,
+  //   private redis: RedisService,
+  //   private gateway: GatewayService,
+  //   private notifications: NotificationsService,
+  //   private inbox: InboxService,
+  //   private autoReply: AutoReplyEngine,
+  //   private workflow: WorkflowEngine,
+  //   private webhook: WebhookService,
+  //   private cfg: ConfigService,
+  // ) {}
 
   constructor(
     private prisma: PrismaService,
@@ -32,7 +45,9 @@ export class SessionManagerService implements OnModuleInit, OnModuleDestroy {
     private gateway: GatewayService,
     private notifications: NotificationsService,
     private inbox: InboxService,
+    @Inject(forwardRef(() => AutoReplyEngine))
     private autoReply: AutoReplyEngine,
+    @Inject(forwardRef(() => WorkflowEngine))
     private workflow: WorkflowEngine,
     private webhook: WebhookService,
     private cfg: ConfigService,

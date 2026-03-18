@@ -4,28 +4,35 @@
 module.exports = {
   apps: [
     {
-      name: "wgw-api",
-      script: "dist/main.js",
-      instances: 1, // WAJIB 1 — whatsapp-web.js tidak thread-safe
-      exec_mode: "fork",
+      name: 'wgw-api',
+      script: 'dist/main.js',
+      instances: 1,
+      exec_mode: 'fork',
       autorestart: true,
       watch: false,
-      max_memory_restart: "1G",
+      max_memory_restart: '1G',
       restart_delay: 3000,
+      kill_timeout: 10000,
+      wait_ready: true,
+      listen_timeout: 15000,
       env: {
-        NODE_ENV: "development",
+        NODE_ENV: 'development',
       },
       env_production: {
-        NODE_ENV: "production",
+        NODE_ENV: 'production',
       },
-      error_file: "./logs/pm2-error.log",
-      out_file: "./logs/pm2-out.log",
-      log_date_format: "YYYY-MM-DD HH:mm:ss",
+      error_file: './logs/pm2-error.log',
+      out_file: './logs/pm2-out.log',
+      log_date_format: 'YYYY-MM-DD HH:mm:ss',
       merge_logs: true,
       time: true,
+      exp_backoff_restart_delay: 100,
+      max_restarts: 10,
+      min_uptime: '5s',
     },
   ],
 };
+
 
 ```
 ---
@@ -79,7 +86,8 @@ module.exports = {
     "prisma:migrate": "prisma migrate dev",
     "prisma:migrate:prod": "prisma migrate deploy",
     "prisma:seed": "ts-node prisma/seed.ts",
-    "prisma:studio": "prisma studio"
+    "prisma:studio": "prisma studio",
+    "storage:init": "mkdir -p storage/sessions storage/uploads storage/exports storage/broadcasts/tmp"
   },
   "dependencies": {
     "@google/generative-ai": "^0.21.0",
@@ -176,6 +184,18 @@ module.exports = {
     "testEnvironment": "node",
     "moduleNameMapper": {
       "^src/(.*)$": "<rootDir>/src/$1"
+    },
+    "testPathIgnorePatterns": [
+      "/node_modules/",
+      "/dist/"
+    ],
+    "coverageThreshold": {
+      "global": {
+        "branches": 60,
+        "functions": 70,
+        "lines": 70,
+        "statements": 70
+      }
     }
   }
 }
@@ -1243,7 +1263,12 @@ bootstrap();
 ## File : `src/app.module.ts`
 
 ```ts
-import { Module } from '@nestjs/common';
+import {
+  Module,
+  NestModule,
+  MiddlewareConsumer,
+  RequestMethod,
+} from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { ScheduleModule } from '@nestjs/schedule';
@@ -1273,6 +1298,7 @@ import { ApiKeysModule } from './modules/api-keys/api-keys.module';
 import { SessionsModule } from './modules/sessions/sessions.module';
 import { MessagesModule } from './modules/messages/messages.module';
 import { BroadcastModule } from './modules/broadcast/broadcast.module';
+import { BroadcastListModule } from './modules/broadcast-list/broadcast-list.module';
 import { InboxModule } from './modules/inbox/inbox.module';
 import { GroupsModule } from './modules/groups/groups.module';
 import { ChannelsModule } from './modules/channels/channels.module';
@@ -1282,6 +1308,7 @@ import { AutoReplyModule } from './modules/auto-reply/auto-reply.module';
 import { WorkflowModule } from './modules/workflow/workflow.module';
 import { DripModule } from './modules/drip/drip.module';
 import { SchedulerModule } from './modules/scheduler/scheduler.module';
+import { ScheduledEventModule } from './modules/scheduled-event/scheduled-event.module';
 import { TemplatesModule } from './modules/templates/templates.module';
 import { WebhookModule } from './modules/webhook/webhook.module';
 import { LabelsModule } from './modules/labels/labels.module';
@@ -1295,6 +1322,9 @@ import { HealthModule } from './modules/health/health.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { WorkspaceModule } from './modules/workspace/workspace.module';
 import { CleanupModule } from './modules/cleanup/cleanup.module';
+import { ProfileModule } from './modules/profile/profile.module';
+import { CustomerNoteModule } from './modules/customer-note/customer-note.module';
+import { MaintenanceMiddleware } from './common/middlewares/maintenance.middleware';
 
 @Module({
   imports: [
@@ -1312,11 +1342,8 @@ import { CleanupModule } from './modules/cleanup/cleanup.module';
         throttlerConfig,
       ],
     }),
-
     ThrottlerModule.forRootAsync(throttlerAsyncOptions),
-
     ScheduleModule.forRoot(),
-
     BullModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
@@ -1329,12 +1356,10 @@ import { CleanupModule } from './modules/cleanup/cleanup.module';
         prefix: config.get('redis.keyPrefix'),
       }),
     }),
-
     PrismaModule,
     RedisModule,
     GatewayModule,
     QueueModule,
-
     AuthModule,
     UsersModule,
     TiersModule,
@@ -1342,6 +1367,7 @@ import { CleanupModule } from './modules/cleanup/cleanup.module';
     SessionsModule,
     MessagesModule,
     BroadcastModule,
+    BroadcastListModule,
     InboxModule,
     GroupsModule,
     ChannelsModule,
@@ -1351,6 +1377,7 @@ import { CleanupModule } from './modules/cleanup/cleanup.module';
     WorkflowModule,
     DripModule,
     SchedulerModule,
+    ScheduledEventModule,
     TemplatesModule,
     WebhookModule,
     LabelsModule,
@@ -1364,9 +1391,22 @@ import { CleanupModule } from './modules/cleanup/cleanup.module';
     NotificationsModule,
     WorkspaceModule,
     CleanupModule,
+    ProfileModule,
+    CustomerNoteModule,
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer
+      .apply(MaintenanceMiddleware)
+      .exclude(
+        { path: 'api/v1/health', method: RequestMethod.GET },
+        { path: 'api/v1/auth/google', method: RequestMethod.GET },
+        { path: 'api/v1/auth/google/callback', method: RequestMethod.GET },
+      )
+      .forRoutes({ path: 'api/*', method: RequestMethod.ALL });
+  }
+}
 
 ```
 ---
@@ -2257,6 +2297,48 @@ export class LoggerMiddleware implements NestMiddleware {
 ```
 ---
 
+## File : `src/common/middlewares/maintenance.middleware.ts`
+
+```ts
+import {
+  Injectable,
+  NestMiddleware,
+  ServiceUnavailableException,
+} from '@nestjs/common';
+import { Request, Response, NextFunction } from 'express';
+import { PrismaService } from '../../prisma/prisma.service';
+
+@Injectable()
+export class MaintenanceMiddleware implements NestMiddleware {
+  constructor(private prisma: PrismaService) {}
+
+  async use(req: Request, res: Response, next: NextFunction) {
+    const row = await this.prisma.globalSetting.findUnique({
+      where: { key: 'maintenanceMode' },
+    });
+
+    if (row?.value !== 'true') {
+      return next();
+    }
+
+    const user = (req as any).user;
+    const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
+    if (isAdmin) {
+      return next();
+    }
+
+    throw new ServiceUnavailableException({
+      status: false,
+      error:
+        'Server sedang dalam maintenance. Silakan coba beberapa saat lagi.',
+      code: 'ERR_MAINTENANCE',
+    });
+  }
+}
+
+```
+---
+
 ## File : `src/common/pipes/parse-pagination.pipe.ts`
 
 ```ts
@@ -2432,12 +2514,12 @@ export function isIpAllowed(clientIp: string, whitelist: string): boolean {
 
 ```ts
 import { BadRequestException } from '@nestjs/common';
+import * as FileType from 'file-type';
 import { AllAllowedMimeTypes } from '../constants/mime-types.constant';
 import { ErrorCodes } from '../constants/error-codes.constant';
 
 export async function validateMimeType(buffer: Buffer): Promise<string> {
-  const { fileTypeFromBuffer } = await import('file-type');
-  const type = await fileTypeFromBuffer(buffer);
+  const type = await FileType.fromBuffer(buffer);
   if (
     !type ||
     !(AllAllowedMimeTypes as readonly string[]).includes(type.mime)
@@ -2542,18 +2624,22 @@ export function replacePlaceholders(
 ## File : `src/common/utils/token-generator.util.ts`
 
 ```ts
-import { randomBytes } from "crypto";
+import { randomBytes } from 'crypto';
 
 export function generateApiToken(): string {
-  return randomBytes(24).toString("hex"); // 48-char hex
+  return randomBytes(24).toString('hex');
 }
 
 export function generateTempToken(): string {
-  return randomBytes(16).toString("hex");
+  return randomBytes(16).toString('hex');
 }
 
 export function generateWebhookSecret(): string {
-  return randomBytes(32).toString("hex");
+  return randomBytes(32).toString('hex');
+}
+
+export function generateHexToken(bytes = 24): string {
+  return randomBytes(bytes).toString('hex');
 }
 
 ```
@@ -2603,11 +2689,11 @@ export default registerAs("database", () => ({
 ## File : `src/config/gemini.config.ts`
 
 ```ts
-import { registerAs } from "@nestjs/config";
+import { registerAs } from '@nestjs/config';
 
-export default registerAs("gemini", () => ({
+export default registerAs('gemini', () => ({
   apiKey: process.env.GEMINI_API_KEY,
-  model: process.env.GEMINI_MODEL || "gemini-3-flash-preview",
+  model: process.env.GEMINI_MODEL || 'gemini-3-flash-preview',
   timeoutMs: parseInt(process.env.GEMINI_TIMEOUT_MS, 10) || 10000,
   confidenceThreshold:
     parseFloat(process.env.GEMINI_CONFIDENCE_THRESHOLD) || 0.6,
@@ -3022,13 +3108,13 @@ export class AnalyticsModule {}
 ## File : `src/modules/analytics/analytics.service.ts`
 
 ```ts
-import { Injectable } from "@nestjs/common";
-import { PrismaService } from "../../prisma/prisma.service";
-import { RedisService } from "../../redis/redis.service";
-import { InjectQueue } from "@nestjs/bullmq";
-import { Queue } from "bullmq";
-import { QueueNames } from "../../common/constants/queue-names.constant";
-import { subDays } from "date-fns";
+import { Injectable } from '@nestjs/common';
+import { PrismaService } from '../../prisma/prisma.service';
+import { RedisService } from '../../redis/redis.service';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
+import { QueueNames } from '../../common/constants/queue-names.constant';
+import { subDays, startOfDay, endOfDay, format } from 'date-fns';
 
 @Injectable()
 export class AnalyticsService {
@@ -3054,7 +3140,7 @@ export class AnalyticsService {
         where: { userId, timestamp: { gte: from } },
       }),
       this.prisma.messageLog.count({
-        where: { userId, status: "success", timestamp: { gte: from } },
+        where: { userId, status: 'success', timestamp: { gte: from } },
       }),
       this.prisma.campaign.count({
         where: { userId, createdAt: { gte: from } },
@@ -3062,14 +3148,14 @@ export class AnalyticsService {
       this.prisma.campaign.findMany({
         where: { userId },
         take: 5,
-        orderBy: { createdAt: "desc" },
+        orderBy: { createdAt: 'desc' },
       }),
       this.prisma.messageLog.findMany({
         where: { userId },
         take: 20,
-        orderBy: { timestamp: "desc" },
+        orderBy: { timestamp: 'desc' },
       }),
-      this.getChart(userId, days),
+      this.getChartOptimized(userId, days),
     ]);
 
     const successRate =
@@ -3092,10 +3178,10 @@ export class AnalyticsService {
       webhookCounts,
     ] = await Promise.all([
       this.prisma.whatsappSession.count(),
-      this.prisma.whatsappSession.count({ where: { status: "connected" } }),
-      this.redis.getClient().info("memory"),
-      this.broadcastQueue.getJobCounts("waiting", "active", "failed"),
-      this.webhookQueue.getJobCounts("waiting", "active", "failed"),
+      this.prisma.whatsappSession.count({ where: { status: 'connected' } }),
+      this.redis.getClient().info('memory'),
+      this.broadcastQueue.getJobCounts('waiting', 'active', 'failed'),
+      this.webhookQueue.getJobCounts('waiting', 'active', 'failed'),
     ]);
 
     return {
@@ -3116,32 +3202,37 @@ export class AnalyticsService {
     };
   }
 
-  private async getChart(userId: string, days: number) {
-    const results: any[] = [];
+  private async getChartOptimized(userId: string, days: number) {
+    const from = startOfDay(subDays(new Date(), days - 1));
+    const to = endOfDay(new Date());
+
+    const logs = await this.prisma.messageLog.findMany({
+      where: { userId, timestamp: { gte: from, lte: to } },
+      select: { timestamp: true, status: true },
+    });
+
+    const buckets: Record<
+      string,
+      { total: number; success: number; failed: number }
+    > = {};
+
     for (let i = days - 1; i >= 0; i--) {
-      const date = subDays(new Date(), i);
-      const start = new Date(date.setHours(0, 0, 0, 0));
-      const end = new Date(date.setHours(23, 59, 59, 999));
-      const [total, success] = await Promise.all([
-        this.prisma.messageLog.count({
-          where: { userId, timestamp: { gte: start, lte: end } },
-        }),
-        this.prisma.messageLog.count({
-          where: {
-            userId,
-            status: "success",
-            timestamp: { gte: start, lte: end },
-          },
-        }),
-      ]);
-      results.push({
-        date: start.toISOString().split("T")[0],
-        total,
-        success,
-        failed: total - success,
-      });
+      const date = format(subDays(new Date(), i), 'yyyy-MM-dd');
+      buckets[date] = { total: 0, success: 0, failed: 0 };
     }
-    return results;
+
+    for (const log of logs) {
+      const date = format(new Date(log.timestamp), 'yyyy-MM-dd');
+      if (!buckets[date]) continue;
+      buckets[date].total++;
+      if (log.status === 'success') buckets[date].success++;
+      else buckets[date].failed++;
+    }
+
+    return Object.entries(buckets).map(([date, counts]) => ({
+      date,
+      ...counts,
+    }));
   }
 }
 
@@ -3363,24 +3454,24 @@ export class CreateApiKeyDto {
 ## File : `src/modules/audit/audit.controller.ts`
 
 ```ts
-import { Controller, Get, Query, UseGuards } from "@nestjs/common";
-import { ApiTags, ApiOperation } from "@nestjs/swagger";
-import { AuditService } from "./audit.service";
-import { JwtAuthGuard } from "../../common/guards/jwt-auth.guard";
-import { RolesGuard } from "../../common/guards/roles.guard";
-import { Roles } from "../../common/decorators/roles.decorator";
-import { CurrentUser } from "../../common/decorators/current-user.decorator";
-import { Role } from "../../common/enums/role.enum";
-import { QueryAuditDto } from "./dto/query-audit.dto";
+import { Controller, Get, Query, UseGuards, Res } from '@nestjs/common';
+import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import { Response } from 'express';
+import { AuditService } from './audit.service';
+import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../../common/guards/roles.guard';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { Role } from '../../common/enums/role.enum';
+import { QueryAuditDto } from './dto/query-audit.dto';
 
-@ApiTags("Audit")
+@ApiTags('Audit')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Controller({ path: "audit", version: "1" })
+@Controller({ path: 'audit', version: '1' })
 export class AuditController {
   constructor(private svc: AuditService) {}
 
   @Get()
-  @ApiOperation({ summary: "Riwayat audit log" })
+  @ApiOperation({ summary: 'Riwayat audit log' })
   async findAll(@CurrentUser() u: any, @Query() dto: QueryAuditDto) {
     const isAdmin = [Role.ADMIN, Role.SUPER_ADMIN].includes(u.role);
     const filters = {
@@ -3402,6 +3493,30 @@ export class AuditController {
         totalPages: r.totalPages,
       },
     };
+  }
+
+  @Get('export-pdf')
+  @ApiOperation({ summary: 'Export audit log sebagai PDF' })
+  async exportPdf(
+    @CurrentUser() u: any,
+    @Query() dto: QueryAuditDto,
+    @Res() res: Response,
+  ) {
+    const isAdmin = [Role.ADMIN, Role.SUPER_ADMIN].includes(u.role);
+    const filters = {
+      ...(isAdmin ? {} : { userId: u.id }),
+      action: dto.action,
+      from: dto.from ? new Date(dto.from) : undefined,
+      to: dto.to ? new Date(dto.to) : undefined,
+    };
+    const buffer = await this.svc.exportPdf(filters);
+    const date = new Date().toISOString().split('T')[0].replace(/-/g, '');
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="audit_${date}.pdf"`,
+    );
+    res.send(buffer);
   }
 }
 
@@ -3429,9 +3544,10 @@ export class AuditModule {}
 ## File : `src/modules/audit/audit.service.ts`
 
 ```ts
-import { Injectable } from "@nestjs/common";
-import { PrismaService } from "../../prisma/prisma.service";
-import { AuditAction } from "@prisma/client";
+import { Injectable } from '@nestjs/common';
+import { PrismaService } from '../../prisma/prisma.service';
+import { generatePdf } from '../../common/utils/pdf-generator.util';
+import { AuditAction } from '@prisma/client';
 
 interface AuditLogInput {
   userId?: string;
@@ -3470,7 +3586,6 @@ export class AuditService {
     const page = filters.page ?? 1;
     const limit = filters.limit ?? 20;
     const skip = (page - 1) * limit;
-
     const where: any = {};
     if (filters.userId) where.userId = filters.userId;
     if (filters.action) where.action = filters.action;
@@ -3479,18 +3594,32 @@ export class AuditService {
       if (filters.from) where.timestamp.gte = filters.from;
       if (filters.to) where.timestamp.lte = filters.to;
     }
-
     const [data, total] = await Promise.all([
       this.prisma.auditLog.findMany({
         where,
         skip,
         take: limit,
-        orderBy: { timestamp: "desc" },
+        orderBy: { timestamp: 'desc' },
       }),
       this.prisma.auditLog.count({ where }),
     ]);
-
     return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
+  }
+
+  async exportPdf(filters: {
+    userId?: string;
+    action?: AuditAction;
+    from?: Date;
+    to?: Date;
+  }): Promise<Buffer> {
+    const result = await this.findAll({ ...filters, page: 1, limit: 1000 });
+    const rows = result.data.map((r) => ({
+      timestamp: new Date(r.timestamp).toLocaleString('id-ID'),
+      email: r.userEmail,
+      action: r.action,
+      ip: r.ipAddress,
+    }));
+    return generatePdf('Audit Log', rows);
   }
 }
 
@@ -3560,21 +3689,21 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
-} from "@nestjs/common";
-import { ApiTags, ApiOperation } from "@nestjs/swagger";
-import { AuthGuard } from "@nestjs/passport";
-import { Request, Response } from "express";
-import { AuthService } from "./auth.service";
-import { JwtAuthGuard } from "../../common/guards/jwt-auth.guard";
-import { CurrentUser } from "../../common/decorators/current-user.decorator";
-import { Public } from "../../common/decorators/public.decorator";
-import { ConfigService } from "@nestjs/config";
-import { Verify2faDto } from "./dto/verify-2fa.dto";
-import { Enable2faDto } from "./dto/enable-2fa.dto";
-import { Disable2faDto } from "./dto/disable-2fa.dto";
+} from '@nestjs/common';
+import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import { AuthGuard } from '@nestjs/passport';
+import { Request, Response } from 'express';
+import { AuthService } from './auth.service';
+import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { Public } from '../../common/decorators/public.decorator';
+import { ConfigService } from '@nestjs/config';
+import { Verify2faDto } from './dto/verify-2fa.dto';
+import { Enable2faDto } from './dto/enable-2fa.dto';
+import { Disable2faDto } from './dto/disable-2fa.dto';
 
-@ApiTags("Auth")
-@Controller({ path: "auth", version: "1" })
+@ApiTags('Auth')
+@Controller({ path: 'auth', version: '1' })
 export class AuthController {
   constructor(
     private svc: AuthService,
@@ -3582,21 +3711,21 @@ export class AuthController {
   ) {}
 
   @Public()
-  @Get("google")
-  @UseGuards(AuthGuard("google"))
-  @ApiOperation({ summary: "Redirect ke Google OAuth" })
+  @Get('google')
+  @UseGuards(AuthGuard('google'))
+  @ApiOperation({ summary: 'Redirect ke Google OAuth' })
   googleLogin() {}
 
   @Public()
-  @Get("google/callback")
-  @UseGuards(AuthGuard("google"))
-  @ApiOperation({ summary: "Google OAuth callback" })
+  @Get('google/callback')
+  @UseGuards(AuthGuard('google'))
+  @ApiOperation({ summary: 'Google OAuth callback' })
   async googleCallback(@Req() req: Request, @Res() res: Response) {
     const profile = req.user as any;
     const ip = req.ip;
-    const ua = req.headers["user-agent"];
-    const clientUrl = this.cfg.get<string>("app.clientUrl");
-    const cookieSecure = this.cfg.get<boolean>("app.cookieSecure");
+    const ua = req.headers['user-agent'];
+    const clientUrl = this.cfg.get<string>('app.clientUrl');
+    const cookieSecure = this.cfg.get<boolean>('app.cookieSecure');
 
     const user = await this.svc.validateGoogleUser(profile, ip, ua);
 
@@ -3606,9 +3735,9 @@ export class AuthController {
     }
 
     const token = this.svc.signJwt(user);
-    res.cookie("auth_token", token, {
+    res.cookie('auth_token', token, {
       httpOnly: true,
-      sameSite: "strict",
+      sameSite: 'strict',
       secure: cookieSecure,
       maxAge: 7 * 24 * 3600 * 1000,
     });
@@ -3616,25 +3745,25 @@ export class AuthController {
   }
 
   @Public()
-  @Post("2fa/verify")
+  @Post('2fa/verify')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: "Verifikasi kode 2FA setelah Google login" })
+  @ApiOperation({ summary: 'Verifikasi kode 2FA setelah Google login' })
   async verify2fa(
     @Body() dto: Verify2faDto,
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const cookieSecure = this.cfg.get<boolean>("app.cookieSecure");
+    const cookieSecure = this.cfg.get<boolean>('app.cookieSecure');
     const user = await this.svc.verify2fa(
       dto.tempToken,
       dto.code,
       req.ip,
-      req.headers["user-agent"],
+      req.headers['user-agent'],
     );
     const token = this.svc.signJwt(user);
-    res.cookie("auth_token", token, {
+    res.cookie('auth_token', token, {
       httpOnly: true,
-      sameSite: "strict",
+      sameSite: 'strict',
       secure: cookieSecure,
       maxAge: 7 * 24 * 3600 * 1000,
     });
@@ -3645,8 +3774,8 @@ export class AuthController {
   }
 
   @UseGuards(JwtAuthGuard)
-  @Get("me")
-  @ApiOperation({ summary: "Data user yang sedang login" })
+  @Get('me')
+  @ApiOperation({ summary: 'Data user yang sedang login' })
   me(@CurrentUser() u: any) {
     return {
       status: true,
@@ -3662,17 +3791,17 @@ export class AuthController {
   }
 
   @UseGuards(JwtAuthGuard)
-  @Post("2fa/setup")
+  @Post('2fa/setup')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: "Setup 2FA - generate QR code" })
+  @ApiOperation({ summary: 'Setup 2FA - generate QR code' })
   async setup2fa(@CurrentUser() u: any) {
     return { status: true, data: await this.svc.setup2fa(u.id) };
   }
 
   @UseGuards(JwtAuthGuard)
-  @Post("2fa/enable")
+  @Post('2fa/enable')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: "Aktifkan 2FA setelah scan QR" })
+  @ApiOperation({ summary: 'Aktifkan 2FA setelah scan QR' })
   async enable2fa(
     @CurrentUser() u: any,
     @Body() dto: Enable2faDto,
@@ -3684,15 +3813,15 @@ export class AuthController {
         u.id,
         dto.code,
         req.ip,
-        req.headers["user-agent"],
+        req.headers['user-agent'],
       ),
     };
   }
 
   @UseGuards(JwtAuthGuard)
-  @Post("2fa/disable")
+  @Post('2fa/disable')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: "Nonaktifkan 2FA" })
+  @ApiOperation({ summary: 'Nonaktifkan 2FA' })
   async disable2fa(
     @CurrentUser() u: any,
     @Body() dto: Disable2faDto,
@@ -3704,22 +3833,36 @@ export class AuthController {
         u.id,
         dto.code,
         req.ip,
-        req.headers["user-agent"],
+        req.headers['user-agent'],
       ),
     };
   }
 
   @UseGuards(JwtAuthGuard)
-  @Post("logout")
+  @Post('2fa/backup-codes/regenerate')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: "Logout" })
+  @ApiOperation({ summary: 'Regenerate backup codes 2FA' })
+  async regenerateBackupCodes(
+    @CurrentUser() u: any,
+    @Body() dto: Enable2faDto,
+  ) {
+    return {
+      status: true,
+      data: await this.svc.regenerateBackupCodes(u.id, dto.code),
+    };
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('logout')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Logout' })
   async logout(
     @CurrentUser() u: any,
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
-    await this.svc.logout(u.id, u.email, req.ip, req.headers["user-agent"]);
-    res.clearCookie("auth_token");
+    await this.svc.logout(u.id, u.email, req.ip, req.headers['user-agent']);
+    res.clearCookie('auth_token');
     return { status: true };
   }
 }
@@ -3769,18 +3912,21 @@ import {
   UnauthorizedException,
   BadRequestException,
   ForbiddenException,
-} from "@nestjs/common";
-import { JwtService } from "@nestjs/jwt";
-import { ConfigService } from "@nestjs/config";
-import { PrismaService } from "../../prisma/prisma.service";
-import { RedisService } from "../../redis/redis.service";
-import { AuditService } from "../audit/audit.service";
-import { CacheKeys } from "../../common/constants/cache-keys.constant";
-import { ErrorCodes } from "../../common/constants/error-codes.constant";
-import { generateTempToken } from "../../common/utils/token-generator.util";
-import { AuditAction, Role } from "@prisma/client";
-import * as speakeasy from "speakeasy";
-import * as qrcode from "qrcode";
+} from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
+import { ConfigService } from '@nestjs/config';
+import { PrismaService } from '../../prisma/prisma.service';
+import { RedisService } from '../../redis/redis.service';
+import { AuditService } from '../audit/audit.service';
+import { CacheKeys } from '../../common/constants/cache-keys.constant';
+import { ErrorCodes } from '../../common/constants/error-codes.constant';
+import { generateTempToken, generateHexToken } from '../../common/utils/token-generator.util';
+import { sha256 } from '../../common/utils/hash.util';
+import { AuditAction, Role } from '@prisma/client';
+import * as speakeasy from 'speakeasy';
+import * as qrcode from 'qrcode';
+
+const BACKUP_CODE_COUNT = 8;
 
 @Injectable()
 export class AuthService {
@@ -3797,39 +3943,22 @@ export class AuthService {
     ip: string,
     ua: string,
   ) {
-    const adminEmail = this.cfg.get<string>("app.adminEmail");
-    let user = await this.prisma.user.findUnique({
-      where: { email: profile.email },
-    });
+    const adminEmail = this.cfg.get<string>('app.adminEmail');
+    let user = await this.prisma.user.findUnique({ where: { email: profile.email } });
 
     if (!user) {
       const role: Role = profile.email === adminEmail ? Role.admin : Role.user;
       user = await this.prisma.user.create({
-        data: {
-          email: profile.email,
-          name: profile.name,
-          picture: profile.picture,
-          role,
-        },
+        data: { email: profile.email, name: profile.name, picture: profile.picture, role },
       });
       await this.prisma.userQuota.create({ data: { userId: user.id } });
     } else if (user.role === Role.user && profile.email === adminEmail) {
-      user = await this.prisma.user.update({
-        where: { id: user.id },
-        data: { role: Role.admin },
-      });
+      user = await this.prisma.user.update({ where: { id: user.id }, data: { role: Role.admin } });
     }
 
-    if (!user.isActive)
-      throw new ForbiddenException({ code: ErrorCodes.ACCOUNT_DISABLED });
+    if (!user.isActive) throw new ForbiddenException({ code: ErrorCodes.ACCOUNT_DISABLED });
 
-    await this.audit.log({
-      userId: user.id,
-      userEmail: user.email,
-      action: AuditAction.LOGIN,
-      ip,
-      userAgent: ua,
-    });
+    await this.audit.log({ userId: user.id, userEmail: user.email, action: AuditAction.LOGIN, ip, userAgent: ua });
     return user;
   }
 
@@ -3844,13 +3973,8 @@ export class AuthService {
   }
 
   async verifyTempToken(token: string): Promise<string> {
-    const userId = await this.redis.get<string>(
-      CacheKeys.twoFaTempToken(token),
-    );
-    if (!userId)
-      throw new UnauthorizedException({
-        code: ErrorCodes.TWO_FA_SESSION_EXPIRED,
-      });
+    const userId = await this.redis.get<string>(CacheKeys.twoFaTempToken(token));
+    if (!userId) throw new UnauthorizedException({ code: ErrorCodes.TWO_FA_SESSION_EXPIRED });
     return userId;
   }
 
@@ -3861,40 +3985,30 @@ export class AuthService {
   async verify2fa(tempToken: string, code: string, ip: string, ua: string) {
     const userId = await this.verifyTempToken(tempToken);
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
-    if (!user?.twoFaSecret)
-      throw new UnauthorizedException({ code: ErrorCodes.TWO_FA_NOT_ENABLED });
+    if (!user?.twoFaSecret) throw new UnauthorizedException({ code: ErrorCodes.TWO_FA_NOT_ENABLED });
 
-    const valid = speakeasy.totp.verify({
+    const isTotp = speakeasy.totp.verify({
       secret: user.twoFaSecret,
-      encoding: "base32",
+      encoding: 'base32',
       token: code,
       window: 2,
     });
-    if (!valid)
-      throw new UnauthorizedException({ code: ErrorCodes.TWO_FA_INVALID_CODE });
+
+    if (!isTotp) {
+      const usedBackup = await this.verifyAndConsumeBackupCode(user.id, code);
+      if (!usedBackup) throw new UnauthorizedException({ code: ErrorCodes.TWO_FA_INVALID_CODE });
+    }
 
     await this.deleteTempToken(tempToken);
-    await this.audit.log({
-      userId: user.id,
-      userEmail: user.email,
-      action: AuditAction.LOGIN,
-      ip,
-      userAgent: ua,
-    });
+    await this.audit.log({ userId: user.id, userEmail: user.email, action: AuditAction.LOGIN, ip, userAgent: ua });
     return user;
   }
 
   async setup2fa(userId: string) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
-    if (user?.twoFaEnabled)
-      throw new BadRequestException({
-        code: ErrorCodes.TWO_FA_ALREADY_ENABLED,
-      });
+    if (user?.twoFaEnabled) throw new BadRequestException({ code: ErrorCodes.TWO_FA_ALREADY_ENABLED });
 
-    const secret = speakeasy.generateSecret({
-      name: `WA Gateway (${user.email})`,
-      length: 20,
-    });
+    const secret = speakeasy.generateSecret({ name: `WA Gateway (${user.email})`, length: 20 });
     await this.redis.set(`2fa:setup:${userId}`, secret.base32, 600);
 
     const qr = await qrcode.toDataURL(secret.otpauth_url);
@@ -3903,73 +4017,84 @@ export class AuthService {
 
   async enable2fa(userId: string, code: string, ip: string, ua: string) {
     const secret = await this.redis.get<string>(`2fa:setup:${userId}`);
-    if (!secret)
-      throw new BadRequestException({
-        code: ErrorCodes.TWO_FA_SESSION_EXPIRED,
-      });
+    if (!secret) throw new BadRequestException({ code: ErrorCodes.TWO_FA_SESSION_EXPIRED });
 
-    const valid = speakeasy.totp.verify({
-      secret,
-      encoding: "base32",
-      token: code,
-      window: 2,
-    });
-    if (!valid)
-      throw new UnauthorizedException({ code: ErrorCodes.TWO_FA_INVALID_CODE });
+    const valid = speakeasy.totp.verify({ secret, encoding: 'base32', token: code, window: 2 });
+    if (!valid) throw new UnauthorizedException({ code: ErrorCodes.TWO_FA_INVALID_CODE });
+
+    const backupCodes = this.generateBackupCodes();
+    const hashedCodes = backupCodes.map((c) => sha256(c));
 
     await this.prisma.user.update({
       where: { id: userId },
       data: { twoFaSecret: secret, twoFaEnabled: true },
     });
+    await this.redis.set(`2fa:backup:${userId}`, hashedCodes, 0);
     await this.redis.del(`2fa:setup:${userId}`);
 
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
-    await this.audit.log({
-      userId,
-      userEmail: user.email,
-      action: AuditAction.ENABLE_2FA,
-      ip,
-      userAgent: ua,
-    });
-    return { message: "2FA enabled" };
+    await this.audit.log({ userId, userEmail: user.email, action: AuditAction.ENABLE_2FA, ip, userAgent: ua });
+    return { message: '2FA enabled', backupCodes };
   }
 
   async disable2fa(userId: string, code: string, ip: string, ua: string) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
-    if (!user?.twoFaEnabled)
-      throw new BadRequestException({ code: ErrorCodes.TWO_FA_NOT_ENABLED });
+    if (!user?.twoFaEnabled) throw new BadRequestException({ code: ErrorCodes.TWO_FA_NOT_ENABLED });
 
-    const valid = speakeasy.totp.verify({
+    const isTotp = speakeasy.totp.verify({
       secret: user.twoFaSecret,
-      encoding: "base32",
+      encoding: 'base32',
       token: code,
       window: 2,
     });
-    if (!valid)
-      throw new UnauthorizedException({ code: ErrorCodes.TWO_FA_INVALID_CODE });
+    if (!isTotp) {
+      const usedBackup = await this.verifyAndConsumeBackupCode(user.id, code);
+      if (!usedBackup) throw new UnauthorizedException({ code: ErrorCodes.TWO_FA_INVALID_CODE });
+    }
 
-    await this.prisma.user.update({
-      where: { id: userId },
-      data: { twoFaSecret: null, twoFaEnabled: false },
+    await this.prisma.user.update({ where: { id: userId }, data: { twoFaSecret: null, twoFaEnabled: false } });
+    await this.redis.del(`2fa:backup:${userId}`);
+    await this.audit.log({ userId, userEmail: user.email, action: AuditAction.DISABLE_2FA, ip, userAgent: ua });
+    return { message: '2FA disabled' };
+  }
+
+  async regenerateBackupCodes(userId: string, code: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user?.twoFaEnabled) throw new BadRequestException({ code: ErrorCodes.TWO_FA_NOT_ENABLED });
+
+    const valid = speakeasy.totp.verify({
+      secret: user.twoFaSecret,
+      encoding: 'base32',
+      token: code,
+      window: 2,
     });
-    await this.audit.log({
-      userId,
-      userEmail: user.email,
-      action: AuditAction.DISABLE_2FA,
-      ip,
-      userAgent: ua,
-    });
-    return { message: "2FA disabled" };
+    if (!valid) throw new UnauthorizedException({ code: ErrorCodes.TWO_FA_INVALID_CODE });
+
+    const backupCodes = this.generateBackupCodes();
+    const hashedCodes = backupCodes.map((c) => sha256(c));
+    await this.redis.set(`2fa:backup:${userId}`, hashedCodes, 0);
+    return { backupCodes };
   }
 
   async logout(userId: string, email: string, ip: string, ua: string) {
-    await this.audit.log({
-      userId,
-      userEmail: email,
-      action: AuditAction.LOGOUT,
-      ip,
-      userAgent: ua,
-    });
+    await this.audit.log({ userId, userEmail: email, action: AuditAction.LOGOUT, ip, userAgent: ua });
+  }
+
+  private generateBackupCodes(): string[] {
+    return Array.from({ length: BACKUP_CODE_COUNT }, () =>
+      generateHexToken(5).toUpperCase().match(/.{1,5}/g)!.join('-'),
+    );
+  }
+
+  private async verifyAndConsumeBackupCode(userId: string, code: string): Promise<boolean> {
+    const stored = await this.redis.get<string[]>(`2fa:backup:${userId}`);
+    if (!stored?.length) return false;
+    const hashed = sha256(code.toUpperCase());
+    const idx = stored.indexOf(hashed);
+    if (idx === -1) return false;
+    stored.splice(idx, 1);
+    await this.redis.set(`2fa:backup:${userId}`, stored, 0);
+    return true;
   }
 }
 
@@ -3979,8 +4104,14 @@ export class AuthService {
 ## File : `src/modules/auth/dto/disable-2fa.dto.ts`
 
 ```ts
+import { IsString, Length } from 'class-validator';
+import { ApiProperty } from '@nestjs/swagger';
+
 export class Disable2faDto {
-  @ApiProperty() @IsString() @Length(6, 6) code: string;
+  @ApiProperty()
+  @IsString()
+  @Length(6, 6)
+  code: string;
 }
 
 ```
@@ -3989,8 +4120,14 @@ export class Disable2faDto {
 ## File : `src/modules/auth/dto/enable-2fa.dto.ts`
 
 ```ts
+import { IsString, Length } from 'class-validator';
+import { ApiProperty } from '@nestjs/swagger';
+
 export class Enable2faDto {
-  @ApiProperty() @IsString() @Length(6, 6) code: string;
+  @ApiProperty()
+  @IsString()
+  @Length(6, 6)
+  code: string;
 }
 
 ```
@@ -4720,23 +4857,23 @@ export class QueryCampaignsDto extends PaginationDto {
 ## File : `src/modules/broadcast/processors/broadcast.processor.ts`
 
 ```ts
-import { Processor, WorkerHost } from "@nestjs/bullmq";
-import { Job } from "bullmq";
-import { Logger } from "@nestjs/common";
-import { PrismaService } from "../../../prisma/prisma.service";
-import { SessionManagerService } from "../../sessions/session-manager.service";
-import { GatewayService } from "../../../gateway/gateway.service";
-import { QueueNames } from "../../../common/constants/queue-names.constant";
-import { CampaignStatus, MessageStatus, MessageType } from "@prisma/client";
-import { toJid } from "../../../common/utils/phone-normalizer.util";
-import { MessageMedia } from "whatsapp-web.js";
-import { validateMimeType } from "../../../common/utils/mime-validator.util";
-import * as fs from "fs";
-import * as path from "path";
+import { Processor, WorkerHost } from '@nestjs/bullmq';
+import { Job } from 'bullmq';
+import { Logger } from '@nestjs/common';
+import { PrismaService } from '../../../prisma/prisma.service';
+import { SessionManagerService } from '../../sessions/session-manager.service';
+import { GatewayService } from '../../../gateway/gateway.service';
+import { QueueNames } from '../../../common/constants/queue-names.constant';
+import { CampaignStatus, MessageStatus, MessageType } from '@prisma/client';
+import { toJid } from '../../../common/utils/phone-normalizer.util';
+import { MessageMedia } from 'whatsapp-web.js';
+import { validateMimeType } from '../../../common/utils/mime-validator.util';
+import * as fs from 'fs';
+import * as path from 'path';
 
 @Processor(QueueNames.BROADCAST, { concurrency: 1 })
 export class BroadcastProcessor extends WorkerHost {
-  private logger = new Logger("BroadcastProcessor");
+  private logger = new Logger('BroadcastProcessor');
 
   constructor(
     private prisma: PrismaService,
@@ -4763,39 +4900,57 @@ export class BroadcastProcessor extends WorkerHost {
     if (mediaPath && fs.existsSync(mediaPath)) {
       const buf = fs.readFileSync(mediaPath);
       const mime = await validateMimeType(buf).catch(() => null);
-      if (mime)
+      if (mime) {
         media = new MessageMedia(
           mime,
-          buf.toString("base64"),
+          buf.toString('base64'),
           path.basename(mediaPath),
         );
+      }
     }
 
     for (let i = 0; i < recipients.length; i++) {
       const recipient = recipients[i];
-      const sessionId = sessions[rrIdx % sessions.length];
+      const jid = toJid(recipient);
+      let sent = false;
+
+      const orderedSessions = [
+        ...sessions.slice(rrIdx % sessions.length),
+        ...sessions.slice(0, rrIdx % sessions.length),
+      ];
       rrIdx++;
 
-      try {
-        const jid = toJid(recipient);
-        if (media) {
-          await this.manager.sendMedia(sessionId, jid, media, message);
-        } else {
-          await this.manager.sendMessage(sessionId, jid, message);
+      for (const sessionId of orderedSessions) {
+        try {
+          if (media) {
+            await this.manager.sendMedia(sessionId, jid, media, message);
+          } else {
+            await this.manager.sendMessage(sessionId, jid, message);
+          }
+
+          successCount++;
+          sent = true;
+
+          await this.prisma.messageLog.create({
+            data: {
+              userId,
+              sessionId,
+              campaignId,
+              target: recipient,
+              message,
+              messageType: MessageType.text,
+              status: MessageStatus.success,
+            },
+          });
+          break;
+        } catch (e) {
+          this.logger.warn(
+            `Session ${sessionId} failed for ${recipient}: ${e.message}, trying next session`,
+          );
         }
-        successCount++;
-        await this.prisma.messageLog.create({
-          data: {
-            userId,
-            sessionId,
-            campaignId,
-            target: recipient,
-            message,
-            messageType: MessageType.text,
-            status: MessageStatus.success,
-          },
-        });
-      } catch (e) {
+      }
+
+      if (!sent) {
         failedCount++;
         await this.prisma.messageLog.create({
           data: {
@@ -4806,7 +4961,7 @@ export class BroadcastProcessor extends WorkerHost {
             message,
             messageType: MessageType.text,
             status: MessageStatus.failed,
-            errorMessage: e.message,
+            errorMessage: 'All sessions failed',
           },
         });
       }
@@ -4833,16 +4988,120 @@ export class BroadcastProcessor extends WorkerHost {
       where: { id: campaignId },
       data: { status: CampaignStatus.completed },
     });
+
     this.gateway.emitBroadcastComplete(
       userId,
       campaignId,
       successCount,
       failedCount,
     );
+
     await this.prisma.userQuota.updateMany({
       where: { userId },
       data: { broadcastsThisMonth: { increment: 1 } },
     });
+
+    if (mediaPath && fs.existsSync(mediaPath)) {
+      fs.unlinkSync(mediaPath);
+    }
+  }
+}
+
+```
+---
+
+## File : `src/modules/broadcast-list/broadcast-list.controller.ts`
+
+```ts
+import { Controller, Get, Post, Param, Body, UseGuards } from '@nestjs/common';
+import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import { BroadcastListService } from './broadcast-list.service';
+import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+
+@ApiTags('Broadcast List')
+@UseGuards(JwtAuthGuard)
+@Controller({ path: 'broadcast-list', version: '1' })
+export class BroadcastListController {
+  constructor(private svc: BroadcastListService) {}
+
+  @Get(':sessionId')
+  @ApiOperation({ summary: 'Dapatkan semua broadcast list dari WA' })
+  async getAll(@Param('sessionId') sid: string) {
+    return { status: true, data: await this.svc.getAll(sid) };
+  }
+
+  @Get(':sessionId/:broadcastId')
+  @ApiOperation({ summary: 'Dapatkan broadcast list by ID' })
+  async getById(
+    @Param('sessionId') sid: string,
+    @Param('broadcastId') bid: string,
+  ) {
+    return { status: true, data: await this.svc.getById(sid, bid) };
+  }
+
+  @Post(':sessionId/:broadcastId/send')
+  @ApiOperation({ summary: 'Kirim pesan ke broadcast list' })
+  async send(
+    @Param('sessionId') sid: string,
+    @Param('broadcastId') bid: string,
+    @Body() body: { message: string },
+  ) {
+    return { status: true, data: await this.svc.send(sid, bid, body.message) };
+  }
+}
+
+```
+---
+
+## File : `src/modules/broadcast-list/broadcast-list.module.ts`
+
+```ts
+import { Module } from '@nestjs/common';
+import { BroadcastListController } from './broadcast-list.controller';
+import { BroadcastListService } from './broadcast-list.service';
+import { SessionsModule } from '../sessions/sessions.module';
+
+@Module({
+  imports: [SessionsModule],
+  controllers: [BroadcastListController],
+  providers: [BroadcastListService],
+})
+export class BroadcastListModule {}
+
+```
+---
+
+## File : `src/modules/broadcast-list/broadcast-list.service.ts`
+
+```ts
+import { Injectable, BadRequestException } from '@nestjs/common';
+import { SessionManagerService } from '../sessions/session-manager.service';
+import { ErrorCodes } from '../../common/constants/error-codes.constant';
+
+@Injectable()
+export class BroadcastListService {
+  constructor(private manager: SessionManagerService) {}
+
+  private client(sessionId: string) {
+    const c = this.manager.getClient(sessionId);
+    if (!c)
+      throw new BadRequestException({ code: ErrorCodes.SESSION_NOT_CONNECTED });
+    return c;
+  }
+
+  async getAll(sessionId: string) {
+    const chats = await this.client(sessionId).getChats();
+    return chats.filter(
+      (c: any) => c.isBroadcast && c.id?.server === 'broadcast',
+    );
+  }
+
+  async getById(sessionId: string, broadcastId: string) {
+    return this.client(sessionId).getChatById(broadcastId);
+  }
+
+  async send(sessionId: string, broadcastId: string, message: string) {
+    return this.manager.sendMessage(sessionId, broadcastId, message);
   }
 }
 
@@ -4943,58 +5202,140 @@ import {
   Controller,
   Get,
   Post,
+  Put,
+  Delete,
   Param,
   Body,
   Query,
   UseGuards,
   HttpCode,
   HttpStatus,
-} from "@nestjs/common";
-import { ApiTags, ApiOperation } from "@nestjs/swagger";
-import { ChannelsService } from "./channels.service";
-import { JwtAuthGuard } from "../../common/guards/jwt-auth.guard";
+} from '@nestjs/common';
+import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import { ChannelsService } from './channels.service';
+import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { CreateChannelDto } from './dto/create-channel.dto';
+import { UpdateChannelDto } from './dto/update-channel.dto';
+import { SearchChannelDto } from './dto/search-channel.dto';
+import {
+  ManageChannelAdminDto,
+  ChannelAdminAction,
+} from './dto/manage-channel-admin.dto';
 
-@ApiTags("Channels")
+@ApiTags('Channels')
 @UseGuards(JwtAuthGuard)
-@Controller({ path: "channels", version: "1" })
+@Controller({ path: 'channels', version: '1' })
 export class ChannelsController {
   constructor(private svc: ChannelsService) {}
 
-  @Get(":sessionId")
-  async getAll(@Param("sessionId") sid: string) {
+  @Get(':sessionId')
+  @ApiOperation({ summary: 'Dapatkan semua channel yang diikuti' })
+  async getAll(@Param('sessionId') sid: string) {
     return { status: true, data: await this.svc.getAll(sid) };
   }
 
-  @Get(":sessionId/search")
-  async search(@Param("sessionId") sid: string, @Query("q") q: string) {
-    return { status: true, data: await this.svc.search(sid, q) };
+  @Get(':sessionId/search')
+  @ApiOperation({ summary: 'Cari channel berdasarkan keyword' })
+  async search(
+    @Param('sessionId') sid: string,
+    @Query() dto: SearchChannelDto,
+  ) {
+    return { status: true, data: await this.svc.search(sid, dto.query) };
   }
 
-  @Post(":sessionId/:channelId/subscribe")
+  @Get(':sessionId/invite/:inviteCode')
+  @ApiOperation({ summary: 'Dapatkan channel by invite code' })
+  async getByInviteCode(
+    @Param('sessionId') sid: string,
+    @Param('inviteCode') code: string,
+  ) {
+    return { status: true, data: await this.svc.getByInviteCode(sid, code) };
+  }
+
+  @Post(':sessionId/:channelId/subscribe')
   @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Subscribe ke channel' })
   async subscribe(
-    @Param("sessionId") sid: string,
-    @Param("channelId") cid: string,
+    @Param('sessionId') sid: string,
+    @Param('channelId') cid: string,
   ) {
     return { status: true, data: await this.svc.subscribe(sid, cid) };
   }
 
-  @Post(":sessionId/:channelId/unsubscribe")
+  @Post(':sessionId/:channelId/unsubscribe')
   @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Unsubscribe dari channel' })
   async unsubscribe(
-    @Param("sessionId") sid: string,
-    @Param("channelId") cid: string,
+    @Param('sessionId') sid: string,
+    @Param('channelId') cid: string,
   ) {
     return { status: true, data: await this.svc.unsubscribe(sid, cid) };
   }
 
-  @Post(":sessionId/:channelId/send")
+  @Post(':sessionId/:channelId/send')
+  @ApiOperation({ summary: 'Kirim pesan ke channel' })
   async send(
-    @Param("sessionId") sid: string,
-    @Param("channelId") cid: string,
+    @Param('sessionId') sid: string,
+    @Param('channelId') cid: string,
     @Body() body: { message: string },
   ) {
     return { status: true, data: await this.svc.send(sid, cid, body.message) };
+  }
+
+  @Post(':sessionId/:channelId/admin')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Kelola admin channel (add/remove)' })
+  async manageAdmin(
+    @Param('sessionId') sid: string,
+    @Param('channelId') cid: string,
+    @Body() dto: ManageChannelAdminDto,
+  ) {
+    return {
+      status: true,
+      data: await this.svc.manageAdmin(
+        sid,
+        cid,
+        dto.participantJid,
+        dto.action as 'add' | 'remove',
+      ),
+    };
+  }
+
+  @Post(':sessionId/:channelId/transfer')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Transfer kepemilikan channel' })
+  async transferOwnership(
+    @Param('sessionId') sid: string,
+    @Param('channelId') cid: string,
+    @Body() body: { newOwnerJid: string },
+  ) {
+    return {
+      status: true,
+      data: await this.svc.transferOwnership(sid, cid, body.newOwnerJid),
+    };
+  }
+
+  @Put(':sessionId/:channelId')
+  @ApiOperation({ summary: 'Update nama dan deskripsi channel' })
+  async update(
+    @Param('sessionId') sid: string,
+    @Param('channelId') cid: string,
+    @Body() dto: UpdateChannelDto,
+  ) {
+    return {
+      status: true,
+      data: await this.svc.update(sid, cid, dto.name, dto.description),
+    };
+  }
+
+  @Delete(':sessionId/:channelId')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Hapus channel' })
+  async delete(
+    @Param('sessionId') sid: string,
+    @Param('channelId') cid: string,
+  ) {
+    return { status: true, data: await this.svc.delete(sid, cid) };
   }
 }
 
@@ -5022,9 +5363,11 @@ export class ChannelsModule {}
 ## File : `src/modules/channels/channels.service.ts`
 
 ```ts
-import { Injectable, BadRequestException } from "@nestjs/common";
-import { SessionManagerService } from "../sessions/session-manager.service";
-import { ErrorCodes } from "../../common/constants/error-codes.constant";
+import { Injectable, BadRequestException } from '@nestjs/common';
+import { SessionManagerService } from '../sessions/session-manager.service';
+import { ErrorCodes } from '../../common/constants/error-codes.constant';
+import { MessageMedia } from 'whatsapp-web.js';
+import { validateMimeType } from '../../common/utils/mime-validator.util';
 
 @Injectable()
 export class ChannelsService {
@@ -5045,6 +5388,10 @@ export class ChannelsService {
     return (this.client(sessionId) as any).searchChannels?.(query) ?? [];
   }
 
+  async getByInviteCode(sessionId: string, inviteCode: string) {
+    return (this.client(sessionId) as any).getChannelByInviteCode?.(inviteCode);
+  }
+
   async subscribe(sessionId: string, channelId: string) {
     const ch = await (this.client(sessionId) as any).getChannelById(channelId);
     return ch?.subscribe?.();
@@ -5058,6 +5405,45 @@ export class ChannelsService {
   async send(sessionId: string, channelId: string, message: string) {
     return this.manager.sendMessage(sessionId, channelId, message);
   }
+
+  async manageAdmin(
+    sessionId: string,
+    channelId: string,
+    participantJid: string,
+    action: 'add' | 'remove',
+  ) {
+    const ch = await (this.client(sessionId) as any).getChannelById(channelId);
+    if (action === 'add') return ch?.addAdmin?.(participantJid);
+    return ch?.removeAdmin?.(participantJid);
+  }
+
+  async transferOwnership(
+    sessionId: string,
+    channelId: string,
+    newOwnerJid: string,
+  ) {
+    const ch = await (this.client(sessionId) as any).getChannelById(channelId);
+    return ch?.transferOwnership?.(newOwnerJid);
+  }
+
+  async update(
+    sessionId: string,
+    channelId: string,
+    name?: string,
+    description?: string,
+  ) {
+    const ch = await (this.client(sessionId) as any).getChannelById(channelId);
+    const results: any = {};
+    if (name) results.name = await ch?.setName?.(name);
+    if (description)
+      results.description = await ch?.setDescription?.(description);
+    return results;
+  }
+
+  async delete(sessionId: string, channelId: string) {
+    const ch = await (this.client(sessionId) as any).getChannelById(channelId);
+    return ch?.delete?.();
+  }
 }
 
 ```
@@ -5066,6 +5452,20 @@ export class ChannelsService {
 ## File : `src/modules/channels/dto/create-channel.dto.ts`
 
 ```ts
+import { IsString, IsNotEmpty, IsOptional } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+
+export class CreateChannelDto {
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  name: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  description?: string;
+}
 
 ```
 ---
@@ -5073,6 +5473,24 @@ export class ChannelsService {
 ## File : `src/modules/channels/dto/manage-channel-admin.dto.ts`
 
 ```ts
+import { IsString, IsNotEmpty, IsEnum } from 'class-validator';
+import { ApiProperty } from '@nestjs/swagger';
+
+export enum ChannelAdminAction {
+  ADD = 'add',
+  REMOVE = 'remove',
+}
+
+export class ManageChannelAdminDto {
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  participantJid: string;
+
+  @ApiProperty({ enum: ChannelAdminAction })
+  @IsEnum(ChannelAdminAction)
+  action: ChannelAdminAction;
+}
 
 ```
 ---
@@ -5080,6 +5498,15 @@ export class ChannelsService {
 ## File : `src/modules/channels/dto/search-channel.dto.ts`
 
 ```ts
+import { IsString, IsNotEmpty } from 'class-validator';
+import { ApiProperty } from '@nestjs/swagger';
+
+export class SearchChannelDto {
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  query: string;
+}
 
 ```
 ---
@@ -5087,6 +5514,20 @@ export class ChannelsService {
 ## File : `src/modules/channels/dto/update-channel.dto.ts`
 
 ```ts
+import { IsString, IsOptional } from 'class-validator';
+import { ApiPropertyOptional } from '@nestjs/swagger';
+
+export class UpdateChannelDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  name?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  description?: string;
+}
 
 ```
 ---
@@ -5272,6 +5713,18 @@ export class ChatsService {
 ## File : `src/modules/chats/dto/mute-chat.dto.ts`
 
 ```ts
+import { IsOptional, IsInt, Min } from 'class-validator';
+import { ApiPropertyOptional } from '@nestjs/swagger';
+
+export class MuteChatDto {
+  @ApiPropertyOptional({
+    description: 'Duration in seconds. Omit for indefinite mute.',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  duration?: number;
+}
 
 ```
 ---
@@ -5279,6 +5732,28 @@ export class ChatsService {
 ## File : `src/modules/chats/dto/search-messages.dto.ts`
 
 ```ts
+import { IsString, IsNotEmpty, IsOptional, IsInt, Min } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
+
+export class SearchMessagesDto {
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  query: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  chatId?: string;
+
+  @ApiPropertyOptional({ default: 20 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  limit?: number = 20;
+}
 
 ```
 ---
@@ -5408,26 +5883,27 @@ import {
   Res,
   HttpCode,
   HttpStatus,
-} from "@nestjs/common";
-import { FileInterceptor } from "@nestjs/platform-express";
-import { ApiTags, ApiOperation } from "@nestjs/swagger";
-import { Response } from "express";
-import { ContactsService } from "./contacts.service";
-import { JwtAuthGuard } from "../../common/guards/jwt-auth.guard";
-import { CurrentUser } from "../../common/decorators/current-user.decorator";
-import { CreateContactDto } from "./dto/create-contact.dto";
-import { UpdateContactDto } from "./dto/update-contact.dto";
-import { QueryContactsDto } from "./dto/query-contacts.dto";
-import { BulkDeleteContactsDto } from "./dto/bulk-delete-contacts.dto";
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import { Response } from 'express';
+import { ContactsService } from './contacts.service';
+import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { CreateContactDto } from './dto/create-contact.dto';
+import { UpdateContactDto } from './dto/update-contact.dto';
+import { QueryContactsDto } from './dto/query-contacts.dto';
+import { BulkDeleteContactsDto } from './dto/bulk-delete-contacts.dto';
+import { ImportGoogleContactsDto } from './dto/import-google-contacts.dto';
 
-@ApiTags("Contacts")
+@ApiTags('Contacts')
 @UseGuards(JwtAuthGuard)
-@Controller({ path: "contacts", version: "1" })
+@Controller({ path: 'contacts', version: '1' })
 export class ContactsController {
   constructor(private svc: ContactsService) {}
 
   @Get()
-  @ApiOperation({ summary: "Daftar kontak" })
+  @ApiOperation({ summary: 'Daftar kontak' })
   async findAll(@CurrentUser() u: any, @Query() dto: QueryContactsDto) {
     const r = await this.svc.findAll(u.id, dto);
     return {
@@ -5443,39 +5919,39 @@ export class ContactsController {
   }
 
   @Post()
-  @ApiOperation({ summary: "Tambah kontak" })
+  @ApiOperation({ summary: 'Tambah kontak' })
   async create(@CurrentUser() u: any, @Body() dto: CreateContactDto) {
     return { status: true, data: await this.svc.create(u.id, dto) };
   }
 
-  @Put(":id")
-  @ApiOperation({ summary: "Update kontak" })
+  @Put(':id')
+  @ApiOperation({ summary: 'Update kontak' })
   async update(
     @CurrentUser() u: any,
-    @Param("id") id: string,
+    @Param('id') id: string,
     @Body() dto: UpdateContactDto,
   ) {
     return { status: true, data: await this.svc.update(u.id, id, dto) };
   }
 
-  @Delete(":id")
+  @Delete(':id')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: "Hapus kontak" })
-  async remove(@CurrentUser() u: any, @Param("id") id: string) {
+  @ApiOperation({ summary: 'Hapus kontak' })
+  async remove(@CurrentUser() u: any, @Param('id') id: string) {
     await this.svc.remove(u.id, id);
     return { status: true };
   }
 
-  @Post("bulk-delete")
+  @Post('bulk-delete')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: "Hapus banyak kontak sekaligus" })
+  @ApiOperation({ summary: 'Hapus banyak kontak sekaligus' })
   async bulkDelete(@CurrentUser() u: any, @Body() dto: BulkDeleteContactsDto) {
     return { status: true, data: await this.svc.bulkDelete(u.id, dto) };
   }
 
-  @Post("import")
-  @UseInterceptors(FileInterceptor("file"))
-  @ApiOperation({ summary: "Import kontak dari CSV" })
+  @Post('import')
+  @UseInterceptors(FileInterceptor('file'))
+  @ApiOperation({ summary: 'Import kontak dari CSV' })
   async importCsv(
     @CurrentUser() u: any,
     @UploadedFile() file: Express.Multer.File,
@@ -5483,14 +5959,27 @@ export class ContactsController {
     return { status: true, data: await this.svc.importCsv(u.id, file.buffer) };
   }
 
-  @Get("export")
-  @ApiOperation({ summary: "Export kontak ke CSV" })
+  @Post('import-google')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Import kontak dari Google Contacts' })
+  async importGoogle(
+    @CurrentUser() u: any,
+    @Body() dto: ImportGoogleContactsDto,
+  ) {
+    return {
+      status: true,
+      data: await this.svc.importFromGoogleContacts(u.id, dto.accessToken),
+    };
+  }
+
+  @Get('export')
+  @ApiOperation({ summary: 'Export kontak ke CSV' })
   async exportCsv(@CurrentUser() u: any, @Res() res: Response) {
     const csv = await this.svc.exportCsv(u.id);
-    const date = new Date().toISOString().split("T")[0].replace(/-/g, "");
-    res.setHeader("Content-Type", "text/csv");
+    const date = new Date().toISOString().split('T')[0].replace(/-/g, '');
+    res.setHeader('Content-Type', 'text/csv');
     res.setHeader(
-      "Content-Disposition",
+      'Content-Disposition',
       `attachment; filename="contacts_${date}.csv"`,
     );
     res.send(csv);
@@ -5527,15 +6016,17 @@ import {
   Injectable,
   NotFoundException,
   ConflictException,
-} from "@nestjs/common";
-import { PrismaService } from "../../prisma/prisma.service";
-import { ErrorCodes } from "../../common/constants/error-codes.constant";
-import { normalizePhone } from "../../common/utils/phone-normalizer.util";
-import { parseCsvContacts } from "../../common/utils/csv-parser.util";
-import { CreateContactDto } from "./dto/create-contact.dto";
-import { UpdateContactDto } from "./dto/update-contact.dto";
-import { QueryContactsDto } from "./dto/query-contacts.dto";
-import { BulkDeleteContactsDto } from "./dto/bulk-delete-contacts.dto";
+  BadRequestException,
+} from '@nestjs/common';
+import { PrismaService } from '../../prisma/prisma.service';
+import { ErrorCodes } from '../../common/constants/error-codes.constant';
+import { normalizePhone } from '../../common/utils/phone-normalizer.util';
+import { parseCsvContacts } from '../../common/utils/csv-parser.util';
+import { CreateContactDto } from './dto/create-contact.dto';
+import { UpdateContactDto } from './dto/update-contact.dto';
+import { QueryContactsDto } from './dto/query-contacts.dto';
+import { BulkDeleteContactsDto } from './dto/bulk-delete-contacts.dto';
+import axios from 'axios';
 
 @Injectable()
 export class ContactsService {
@@ -5551,13 +6042,12 @@ export class ContactsService {
       ];
     }
     if (dto.tag) where.tag = dto.tag;
-
     const [data, total] = await Promise.all([
       this.prisma.contact.findMany({
         where,
         skip: dto.skip,
         take: dto.limit,
-        orderBy: { name: "asc" },
+        orderBy: { name: 'asc' },
       }),
       this.prisma.contact.count({ where }),
     ]);
@@ -5618,11 +6108,10 @@ export class ContactsService {
   }
 
   async importCsv(userId: string, buffer: Buffer) {
-    const rows = parseCsvContacts(buffer.toString("utf-8"));
+    const rows = parseCsvContacts(buffer.toString('utf-8'));
     let imported = 0,
       skipped = 0;
     const errors: any[] = [];
-
     for (const row of rows) {
       try {
         const number = normalizePhone(row.number);
@@ -5633,7 +6122,7 @@ export class ContactsService {
         });
         imported++;
       } catch (e) {
-        if (e.code === "P2002") {
+        if (e.code === 'P2002') {
           skipped++;
         } else {
           errors.push({ number: row.number, reason: e.message });
@@ -5643,12 +6132,66 @@ export class ContactsService {
     return { imported, skipped, errors };
   }
 
+  async importFromGoogleContacts(userId: string, accessToken: string) {
+    let imported = 0,
+      skipped = 0;
+    const errors: any[] = [];
+    let pageToken: string | undefined;
+
+    do {
+      const params: any = {
+        personFields: 'names,phoneNumbers',
+        pageSize: 100,
+      };
+      if (pageToken) params.pageToken = pageToken;
+
+      const res = await axios
+        .get('https://people.googleapis.com/v1/people/me/connections', {
+          headers: { Authorization: `Bearer ${accessToken}` },
+          params,
+        })
+        .catch((e) => {
+          throw new BadRequestException({
+            code: ErrorCodes.INVALID_GOOGLE_TOKEN,
+            message: e.message,
+          });
+        });
+
+      const connections = res.data.connections ?? [];
+      pageToken = res.data.nextPageToken;
+
+      for (const person of connections) {
+        const name = person.names?.[0]?.displayName ?? '';
+        const phones = person.phoneNumbers ?? [];
+        for (const phone of phones) {
+          try {
+            const number = normalizePhone(phone.value);
+            await this.prisma.contact.upsert({
+              where: { userId_number: { userId, number } },
+              create: { userId, name, number },
+              update: {},
+            });
+            imported++;
+          } catch (e) {
+            if (e.code === 'P2002') {
+              skipped++;
+            } else {
+              errors.push({ name, phone: phone.value, reason: e.message });
+            }
+          }
+        }
+      }
+    } while (pageToken);
+
+    return { imported, skipped, errors };
+  }
+
   async exportCsv(userId: string): Promise<string> {
     const contacts = await this.prisma.contact.findMany({ where: { userId } });
-    const header = "name,number,tag\n";
+    const header = 'name,number,tag\n';
     const rows = contacts
-      .map((c) => `"${c.name}","${c.number}","${c.tag ?? ""}"`)
-      .join("\n");
+      .map((c) => `"${c.name}","${c.number}","${c.tag ?? ''}"`)
+      .join('\n');
     return header + rows;
   }
 
@@ -5697,6 +6240,15 @@ export class CreateContactDto {
 ## File : `src/modules/contacts/dto/import-contacts.dto.ts`
 
 ```ts
+import { IsString, IsNotEmpty } from 'class-validator';
+import { ApiProperty } from '@nestjs/swagger';
+
+export class ImportContactsDto {
+  @ApiProperty({ description: 'Raw CSV string with headers: name,number,tag' })
+  @IsString()
+  @IsNotEmpty()
+  csvData: string;
+}
 
 ```
 ---
@@ -5704,6 +6256,15 @@ export class CreateContactDto {
 ## File : `src/modules/contacts/dto/import-google-contacts.dto.ts`
 
 ```ts
+import { IsString, IsNotEmpty } from 'class-validator';
+import { ApiProperty } from '@nestjs/swagger';
+
+export class ImportGoogleContactsDto {
+  @ApiProperty({ description: 'Google OAuth access token' })
+  @IsString()
+  @IsNotEmpty()
+  accessToken: string;
+}
 
 ```
 ---
@@ -5729,6 +6290,141 @@ export class QueryContactsDto extends PaginationDto {
 import { PartialType } from "@nestjs/swagger";
 import { CreateContactDto } from "./create-contact.dto";
 export class UpdateContactDto extends PartialType(CreateContactDto) {}
+
+```
+---
+
+## File : `src/modules/customer-note/customer-note.controller.ts`
+
+```ts
+import {
+  Controller,
+  Get,
+  Put,
+  Delete,
+  Param,
+  Body,
+  UseGuards,
+  HttpCode,
+  HttpStatus,
+} from '@nestjs/common';
+import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import { CustomerNoteService } from './customer-note.service';
+import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { UpsertNoteDto } from './dto/upsert-note.dto';
+
+@ApiTags('Customer Note')
+@UseGuards(JwtAuthGuard)
+@Controller({ path: 'contacts/:contactId/note', version: '1' })
+export class CustomerNoteController {
+  constructor(private svc: CustomerNoteService) {}
+
+  @Get()
+  @ApiOperation({ summary: 'Dapatkan catatan kontak' })
+  async getNote(@CurrentUser() u: any, @Param('contactId') cid: string) {
+    return { status: true, data: await this.svc.getNote(u.id, cid) };
+  }
+
+  @Put()
+  @ApiOperation({ summary: 'Tambah atau update catatan kontak' })
+  async upsertNote(
+    @CurrentUser() u: any,
+    @Param('contactId') cid: string,
+    @Body() dto: UpsertNoteDto,
+  ) {
+    return {
+      status: true,
+      data: await this.svc.upsertNote(u.id, cid, dto.content),
+    };
+  }
+
+  @Delete()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Hapus catatan kontak' })
+  async deleteNote(@CurrentUser() u: any, @Param('contactId') cid: string) {
+    return { status: true, data: await this.svc.deleteNote(u.id, cid) };
+  }
+}
+
+```
+---
+
+## File : `src/modules/customer-note/customer-note.module.ts`
+
+```ts
+import { Module } from '@nestjs/common';
+import { CustomerNoteController } from './customer-note.controller';
+import { CustomerNoteService } from './customer-note.service';
+
+@Module({
+  controllers: [CustomerNoteController],
+  providers: [CustomerNoteService],
+})
+export class CustomerNoteModule {}
+
+```
+---
+
+## File : `src/modules/customer-note/customer-note.service.ts`
+
+```ts
+import { Injectable, NotFoundException } from '@nestjs/common';
+import { PrismaService } from '../../prisma/prisma.service';
+import { ErrorCodes } from '../../common/constants/error-codes.constant';
+
+@Injectable()
+export class CustomerNoteService {
+  constructor(private prisma: PrismaService) {}
+
+  async getNote(userId: string, contactId: string) {
+    const contact = await this.prisma.contact.findFirst({
+      where: { id: contactId, userId },
+    });
+    if (!contact) throw new NotFoundException({ code: ErrorCodes.NOT_FOUND });
+    return { contactId, notes: contact.notes };
+  }
+
+  async upsertNote(userId: string, contactId: string, content: string) {
+    const contact = await this.prisma.contact.findFirst({
+      where: { id: contactId, userId },
+    });
+    if (!contact) throw new NotFoundException({ code: ErrorCodes.NOT_FOUND });
+    const updated = await this.prisma.contact.update({
+      where: { id: contactId },
+      data: { notes: content },
+    });
+    return { contactId, notes: updated.notes };
+  }
+
+  async deleteNote(userId: string, contactId: string) {
+    const contact = await this.prisma.contact.findFirst({
+      where: { id: contactId, userId },
+    });
+    if (!contact) throw new NotFoundException({ code: ErrorCodes.NOT_FOUND });
+    await this.prisma.contact.update({
+      where: { id: contactId },
+      data: { notes: null },
+    });
+    return { deleted: true };
+  }
+}
+
+```
+---
+
+## File : `src/modules/customer-note/dto/upsert-note.dto.ts`
+
+```ts
+import { IsString, IsNotEmpty } from 'class-validator';
+import { ApiProperty } from '@nestjs/swagger';
+
+export class UpsertNoteDto {
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  content: string;
+}
 
 ```
 ---
@@ -6245,6 +6941,20 @@ export class UpdateDripDto extends PartialType(CreateDripDto) {}
 ## File : `src/modules/groups/dto/create-group.dto.ts`
 
 ```ts
+import { IsString, IsNotEmpty, IsArray, ArrayMinSize } from 'class-validator';
+import { ApiProperty } from '@nestjs/swagger';
+
+export class CreateGroupDto {
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  name: string;
+
+  @ApiProperty({ type: [String] })
+  @IsArray()
+  @ArrayMinSize(1)
+  participants: string[];
+}
 
 ```
 ---
@@ -6252,6 +6962,16 @@ export class UpdateDripDto extends PartialType(CreateDripDto) {}
 ## File : `src/modules/groups/dto/manage-admins.dto.ts`
 
 ```ts
+import { IsArray, ArrayMinSize, IsString } from 'class-validator';
+import { ApiProperty } from '@nestjs/swagger';
+
+export class ManageAdminsDto {
+  @ApiProperty({ type: [String] })
+  @IsArray()
+  @ArrayMinSize(1)
+  @IsString({ each: true })
+  participants: string[];
+}
 
 ```
 ---
@@ -6259,6 +6979,16 @@ export class UpdateDripDto extends PartialType(CreateDripDto) {}
 ## File : `src/modules/groups/dto/manage-members.dto.ts`
 
 ```ts
+import { IsArray, ArrayMinSize, IsString } from 'class-validator';
+import { ApiProperty } from '@nestjs/swagger';
+
+export class ManageMembersDto {
+  @ApiProperty({ type: [String] })
+  @IsArray()
+  @ArrayMinSize(1)
+  @IsString({ each: true })
+  participants: string[];
+}
 
 ```
 ---
@@ -6266,6 +6996,24 @@ export class UpdateDripDto extends PartialType(CreateDripDto) {}
 ## File : `src/modules/groups/dto/membership-request.dto.ts`
 
 ```ts
+import { IsString, IsNotEmpty, IsEnum } from 'class-validator';
+import { ApiProperty } from '@nestjs/swagger';
+
+export enum MembershipRequestAction {
+  APPROVE = 'approve',
+  REJECT = 'reject',
+}
+
+export class MembershipRequestDto {
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  requesterJid: string;
+
+  @ApiProperty({ enum: MembershipRequestAction })
+  @IsEnum(MembershipRequestAction)
+  action: MembershipRequestAction;
+}
 
 ```
 ---
@@ -6273,6 +7021,20 @@ export class UpdateDripDto extends PartialType(CreateDripDto) {}
 ## File : `src/modules/groups/dto/update-group.dto.ts`
 
 ```ts
+import { IsString, IsOptional } from 'class-validator';
+import { ApiPropertyOptional } from '@nestjs/swagger';
+
+export class UpdateGroupDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  subject?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  description?: string;
+}
 
 ```
 ---
@@ -6284,149 +7046,152 @@ import {
   Controller,
   Get,
   Post,
-  Delete,
   Param,
   Body,
   UseGuards,
   HttpCode,
   HttpStatus,
-} from "@nestjs/common";
-import { ApiTags, ApiOperation } from "@nestjs/swagger";
-import { GroupsService } from "./groups.service";
-import { JwtAuthGuard } from "../../common/guards/jwt-auth.guard";
-import { CurrentUser } from "../../common/decorators/current-user.decorator";
+} from '@nestjs/common';
+import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import { GroupsService } from './groups.service';
+import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { CreateGroupDto } from './dto/create-group.dto';
+import { ManageMembersDto } from './dto/manage-members.dto';
+import { ManageAdminsDto } from './dto/manage-admins.dto';
+import { UpdateGroupDto } from './dto/update-group.dto';
+import { MembershipRequestDto } from './dto/membership-request.dto';
 
-@ApiTags("Groups")
+@ApiTags('Groups')
 @UseGuards(JwtAuthGuard)
-@Controller({ path: "groups", version: "1" })
+@Controller({ path: 'groups', version: '1' })
 export class GroupsController {
   constructor(private svc: GroupsService) {}
 
   @Post()
-  @ApiOperation({ summary: "Buat grup baru" })
-  async create(
-    @Body() body: { sessionId: string; name: string; participants: string[] },
-  ) {
+  @ApiOperation({ summary: 'Buat grup baru' })
+  async create(@Param('sessionId') sid: string, @Body() dto: CreateGroupDto) {
     return {
       status: true,
-      data: await this.svc.create(body.sessionId, body.name, body.participants),
+      data: await this.svc.create(sid, dto.name, dto.participants),
     };
   }
 
-  @Get(":sessionId/:groupId")
-  @ApiOperation({ summary: "Info grup" })
+  @Get(':sessionId/:groupId')
+  @ApiOperation({ summary: 'Info grup' })
   async getInfo(
-    @Param("sessionId") sid: string,
-    @Param("groupId") gid: string,
+    @Param('sessionId') sid: string,
+    @Param('groupId') gid: string,
   ) {
     return { status: true, data: await this.svc.getInfo(sid, gid) };
   }
 
-  @Post(":sessionId/:groupId/participants/add")
+  @Post(':sessionId/:groupId/participants/add')
   @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Tambah anggota grup' })
   async addParticipants(
-    @Param("sessionId") sid: string,
-    @Param("groupId") gid: string,
-    @Body() body: { participants: string[] },
+    @Param('sessionId') sid: string,
+    @Param('groupId') gid: string,
+    @Body() dto: ManageMembersDto,
   ) {
     return {
       status: true,
-      data: await this.svc.addParticipants(sid, gid, body.participants),
+      data: await this.svc.addParticipants(sid, gid, dto.participants),
     };
   }
 
-  @Post(":sessionId/:groupId/participants/remove")
+  @Post(':sessionId/:groupId/participants/remove')
   @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Hapus anggota grup' })
   async removeParticipants(
-    @Param("sessionId") sid: string,
-    @Param("groupId") gid: string,
-    @Body() body: { participants: string[] },
+    @Param('sessionId') sid: string,
+    @Param('groupId') gid: string,
+    @Body() dto: ManageMembersDto,
   ) {
     return {
       status: true,
-      data: await this.svc.removeParticipants(sid, gid, body.participants),
+      data: await this.svc.removeParticipants(sid, gid, dto.participants),
     };
   }
 
-  @Post(":sessionId/:groupId/participants/promote")
+  @Post(':sessionId/:groupId/participants/promote')
   @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Promosi anggota menjadi admin' })
   async promoteParticipants(
-    @Param("sessionId") sid: string,
-    @Param("groupId") gid: string,
-    @Body() body: { participants: string[] },
+    @Param('sessionId') sid: string,
+    @Param('groupId') gid: string,
+    @Body() dto: ManageAdminsDto,
   ) {
     return {
       status: true,
-      data: await this.svc.promoteParticipants(sid, gid, body.participants),
+      data: await this.svc.promoteParticipants(sid, gid, dto.participants),
     };
   }
 
-  @Post(":sessionId/:groupId/participants/demote")
+  @Post(':sessionId/:groupId/participants/demote')
   @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Demosi admin menjadi anggota biasa' })
   async demoteParticipants(
-    @Param("sessionId") sid: string,
-    @Param("groupId") gid: string,
-    @Body() body: { participants: string[] },
+    @Param('sessionId') sid: string,
+    @Param('groupId') gid: string,
+    @Body() dto: ManageAdminsDto,
   ) {
     return {
       status: true,
-      data: await this.svc.demoteParticipants(sid, gid, body.participants),
+      data: await this.svc.demoteParticipants(sid, gid, dto.participants),
     };
   }
 
-  @Post(":sessionId/:groupId/subject")
+  @Post(':sessionId/:groupId/update')
   @HttpCode(HttpStatus.OK)
-  async updateSubject(
-    @Param("sessionId") sid: string,
-    @Param("groupId") gid: string,
-    @Body() body: { subject: string },
+  @ApiOperation({ summary: 'Update nama dan deskripsi grup' })
+  async updateGroup(
+    @Param('sessionId') sid: string,
+    @Param('groupId') gid: string,
+    @Body() dto: UpdateGroupDto,
   ) {
-    return {
-      status: true,
-      data: await this.svc.updateSubject(sid, gid, body.subject),
-    };
+    const results: any = {};
+    if (dto.subject)
+      results.subject = await this.svc.updateSubject(sid, gid, dto.subject);
+    if (dto.description)
+      results.description = await this.svc.updateDescription(
+        sid,
+        gid,
+        dto.description,
+      );
+    return { status: true, data: results };
   }
 
-  @Post(":sessionId/:groupId/description")
+  @Post(':sessionId/:groupId/leave')
   @HttpCode(HttpStatus.OK)
-  async updateDescription(
-    @Param("sessionId") sid: string,
-    @Param("groupId") gid: string,
-    @Body() body: { description: string },
-  ) {
-    return {
-      status: true,
-      data: await this.svc.updateDescription(sid, gid, body.description),
-    };
-  }
-
-  @Post(":sessionId/:groupId/leave")
-  @HttpCode(HttpStatus.OK)
-  async leave(@Param("sessionId") sid: string, @Param("groupId") gid: string) {
+  @ApiOperation({ summary: 'Keluar dari grup' })
+  async leave(@Param('sessionId') sid: string, @Param('groupId') gid: string) {
     return { status: true, data: await this.svc.leave(sid, gid) };
   }
 
-  @Get(":sessionId/:groupId/invite")
+  @Get(':sessionId/:groupId/invite')
+  @ApiOperation({ summary: 'Dapatkan invite link grup' })
   async getInviteCode(
-    @Param("sessionId") sid: string,
-    @Param("groupId") gid: string,
+    @Param('sessionId') sid: string,
+    @Param('groupId') gid: string,
   ) {
     return { status: true, data: await this.svc.getInviteCode(sid, gid) };
   }
 
-  @Post(":sessionId/:groupId/invite/revoke")
+  @Post(':sessionId/:groupId/invite/revoke')
   @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Revoke invite link grup' })
   async revokeInvite(
-    @Param("sessionId") sid: string,
-    @Param("groupId") gid: string,
+    @Param('sessionId') sid: string,
+    @Param('groupId') gid: string,
   ) {
     return { status: true, data: await this.svc.revokeInvite(sid, gid) };
   }
 
-  @Post(":sessionId/join")
+  @Post(':sessionId/join')
   @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Join grup via invite code' })
   async join(
-    @Param("sessionId") sid: string,
+    @Param('sessionId') sid: string,
     @Body() body: { inviteCode: string },
   ) {
     return {
@@ -6435,12 +7200,48 @@ export class GroupsController {
     };
   }
 
-  @Get(":sessionId/invite/:inviteCode/info")
+  @Get(':sessionId/invite/:inviteCode/info')
+  @ApiOperation({ summary: 'Dapatkan info grup sebelum join' })
   async getInviteInfo(
-    @Param("sessionId") sid: string,
-    @Param("inviteCode") code: string,
+    @Param('sessionId') sid: string,
+    @Param('inviteCode') code: string,
   ) {
     return { status: true, data: await this.svc.getInviteInfo(sid, code) };
+  }
+
+  @Post(':sessionId/:groupId/membership-request')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Approve atau reject join request' })
+  async handleMembershipRequest(
+    @Param('sessionId') sid: string,
+    @Param('groupId') gid: string,
+    @Body() dto: MembershipRequestDto,
+  ) {
+    return {
+      status: true,
+      data: await this.svc.handleMembershipRequest(sid, gid, dto),
+    };
+  }
+
+  @Get(':sessionId/:groupId/membership-requests')
+  @ApiOperation({ summary: 'Dapatkan daftar join request yang pending' })
+  async getMembershipRequests(
+    @Param('sessionId') sid: string,
+    @Param('groupId') gid: string,
+  ) {
+    return {
+      status: true,
+      data: await this.svc.getMembershipRequests(sid, gid),
+    };
+  }
+
+  @Get(':sessionId/contacts/:contactId/common-groups')
+  @ApiOperation({ summary: 'Dapatkan grup yang sama antara bot dan kontak' })
+  async getCommonGroups(
+    @Param('sessionId') sid: string,
+    @Param('contactId') cid: string,
+  ) {
+    return { status: true, data: await this.svc.getCommonGroups(sid, cid) };
   }
 }
 
@@ -6468,13 +7269,13 @@ export class GroupsModule {}
 ## File : `src/modules/groups/groups.service.ts`
 
 ```ts
+import { Injectable, BadRequestException } from '@nestjs/common';
+import { SessionManagerService } from '../sessions/session-manager.service';
+import { ErrorCodes } from '../../common/constants/error-codes.constant';
 import {
-  Injectable,
-  BadRequestException,
-  NotFoundException,
-} from "@nestjs/common";
-import { SessionManagerService } from "../sessions/session-manager.service";
-import { ErrorCodes } from "../../common/constants/error-codes.constant";
+  MembershipRequestDto,
+  MembershipRequestAction,
+} from './dto/membership-request.dto';
 
 @Injectable()
 export class GroupsService {
@@ -6567,6 +7368,29 @@ export class GroupsService {
 
   async getInviteInfo(sessionId: string, inviteCode: string) {
     return this.client(sessionId).getInviteInfo(inviteCode);
+  }
+
+  async handleMembershipRequest(
+    sessionId: string,
+    groupId: string,
+    dto: MembershipRequestDto,
+  ) {
+    const group = (await this.client(sessionId).getChatById(groupId)) as any;
+    if (dto.action === MembershipRequestAction.APPROVE) {
+      return group.approveGroupMembershipRequests([dto.requesterJid]);
+    }
+    return group.rejectGroupMembershipRequests([dto.requesterJid]);
+  }
+
+  async getMembershipRequests(sessionId: string, groupId: string) {
+    const group = (await this.client(sessionId).getChatById(groupId)) as any;
+    return group.getGroupMembershipRequests?.() ?? [];
+  }
+
+  async getCommonGroups(sessionId: string, contactId: string) {
+    const contact = await this.client(sessionId).getContactById(contactId);
+    if (!contact) throw new BadRequestException({ code: ErrorCodes.NOT_FOUND });
+    return (contact as any).getCommonGroups?.() ?? [];
   }
 }
 
@@ -6862,6 +7686,20 @@ export class InboxService {
 ## File : `src/modules/labels/dto/assign-label.dto.ts`
 
 ```ts
+import { IsString, IsNotEmpty, IsArray, ArrayMinSize } from 'class-validator';
+import { ApiProperty } from '@nestjs/swagger';
+
+export class AssignLabelDto {
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  labelId: string;
+
+  @ApiProperty({ type: [String] })
+  @IsArray()
+  @ArrayMinSize(1)
+  chatIds: string[];
+}
 
 ```
 ---
@@ -6869,6 +7707,20 @@ export class InboxService {
 ## File : `src/modules/labels/dto/create-label.dto.ts`
 
 ```ts
+import { IsString, IsNotEmpty, IsOptional } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+
+export class CreateLabelDto {
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  name: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  color?: string;
+}
 
 ```
 ---
@@ -7020,8 +7872,15 @@ export class QueryMessagesDto extends PaginationDto {
 ## File : `src/modules/messages/dto/react-message.dto.ts`
 
 ```ts
+import { IsString, IsNotEmpty } from 'class-validator';
+import { ApiProperty } from '@nestjs/swagger';
+
 export class ReactMessageDto {
-  @ApiProperty() @IsString() reaction: string;
+  @ApiProperty({
+    description: 'Emoji reaction. Empty string to remove reaction.',
+  })
+  @IsString()
+  reaction: string;
 }
 
 ```
@@ -7030,6 +7889,67 @@ export class ReactMessageDto {
 ## File : `src/modules/messages/dto/send-contact.dto.ts`
 
 ```ts
+import {
+  IsString,
+  IsNotEmpty,
+  IsArray,
+  ArrayMinSize,
+  IsOptional,
+} from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+
+export class SendContactDto {
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  to: string;
+
+  @ApiProperty({
+    type: [String],
+    description: 'Phone numbers of contacts to send as vCard',
+  })
+  @IsArray()
+  @ArrayMinSize(1)
+  @IsString({ each: true })
+  contacts: string[];
+
+  @ApiPropertyOptional({ default: 'auto' })
+  @IsOptional()
+  @IsString()
+  sessionId?: string = 'auto';
+}
+
+```
+---
+
+## File : `src/modules/messages/dto/send-live-location.dto.ts`
+
+```ts
+import {
+  IsNumber,
+  IsOptional,
+  IsString,
+  IsNotEmpty,
+  IsInt,
+  Min,
+} from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+
+export class SendLiveLocationDto {
+  @ApiProperty() @IsString() @IsNotEmpty() to: string;
+  @ApiProperty() @IsNumber() latitude: number;
+  @ApiProperty() @IsNumber() longitude: number;
+  @ApiPropertyOptional({ description: 'Duration in seconds, default 60' })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  duration?: number = 60;
+  @ApiPropertyOptional() @IsOptional() @IsString() description?: string;
+  @ApiPropertyOptional({ default: 'auto' })
+  @IsOptional()
+  @IsString()
+  sessionId?: string = 'auto';
+}
 
 ```
 ---
@@ -7057,13 +7977,24 @@ export class SendLocationDto {
 ## File : `src/modules/messages/dto/send-media.dto.ts`
 
 ```ts
+import { IsString, IsNotEmpty, IsOptional } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+
 export class SendMediaDto {
-  @ApiProperty() @IsString() @IsNotEmpty() to: string;
-  @ApiPropertyOptional({ default: "auto" })
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  to: string;
+
+  @ApiPropertyOptional({ default: 'auto' })
   @IsOptional()
   @IsString()
-  sessionId?: string = "auto";
-  @ApiPropertyOptional() @IsOptional() @IsString() caption?: string;
+  sessionId?: string = 'auto';
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  caption?: string;
 }
 
 ```
@@ -7116,6 +8047,23 @@ export class SendPollDto {
 ```
 ---
 
+## File : `src/modules/messages/dto/send-voice-note.dto.ts`
+
+```ts
+import { IsString, IsNotEmpty, IsOptional } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+
+export class SendVoiceNoteDto {
+  @ApiProperty() @IsString() @IsNotEmpty() to: string;
+  @ApiPropertyOptional({ default: 'auto' })
+  @IsOptional()
+  @IsString()
+  sessionId?: string = 'auto';
+}
+
+```
+---
+
 ## File : `src/modules/messages/messages.controller.ts`
 
 ```ts
@@ -7124,6 +8072,7 @@ import {
   Get,
   Post,
   Delete,
+  Patch,
   Param,
   Body,
   Query,
@@ -7132,36 +8081,41 @@ import {
   UseInterceptors,
   HttpCode,
   HttpStatus,
-} from "@nestjs/common";
-import { FileInterceptor } from "@nestjs/platform-express";
-import { ApiTags, ApiOperation } from "@nestjs/swagger";
-import { MessagesService } from "./messages.service";
-import { JwtAuthGuard } from "../../common/guards/jwt-auth.guard";
-import { ApiKeyGuard } from "../../common/guards/api-key.guard";
-import { CurrentUser } from "../../common/decorators/current-user.decorator";
-import { SendMessageDto } from "./dto/send-message.dto";
-import { SendMediaDto } from "./dto/send-media.dto";
-import { SendLocationDto } from "./dto/send-location.dto";
-import { SendPollDto } from "./dto/send-poll.dto";
-import { ReactMessageDto } from "./dto/react-message.dto";
-import { QueryMessagesDto } from "./dto/query-messages.dto";
+  Res,
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import { Response } from 'express';
+import { ConfigService } from '@nestjs/config';
+import { MessagesService } from './messages.service';
+import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { SendMessageDto } from './dto/send-message.dto';
+import { SendMediaDto } from './dto/send-media.dto';
+import { SendLocationDto } from './dto/send-location.dto';
+import { SendPollDto } from './dto/send-poll.dto';
+import { SendContactDto } from './dto/send-contact.dto';
+import { ReactMessageDto } from './dto/react-message.dto';
+import { QueryMessagesDto } from './dto/query-messages.dto';
 
-@ApiTags("Messages")
-@Controller({ path: "messages", version: "1" })
+@ApiTags('Messages')
+@UseGuards(JwtAuthGuard)
+@Controller({ path: 'messages', version: '1' })
 export class MessagesController {
-  constructor(private svc: MessagesService) {}
+  constructor(
+    private svc: MessagesService,
+    private cfg: ConfigService,
+  ) {}
 
-  @UseGuards(JwtAuthGuard)
-  @Post("send")
-  @ApiOperation({ summary: "Kirim pesan teks" })
+  @Post('send')
+  @ApiOperation({ summary: 'Kirim pesan teks' })
   async send(@CurrentUser() u: any, @Body() dto: SendMessageDto) {
     return { status: true, data: await this.svc.send(u.id, dto) };
   }
 
-  @UseGuards(JwtAuthGuard)
-  @Post("send-media")
-  @UseInterceptors(FileInterceptor("file"))
-  @ApiOperation({ summary: "Kirim pesan media" })
+  @Post('send-media')
+  @UseInterceptors(FileInterceptor('file'))
+  @ApiOperation({ summary: 'Kirim pesan media' })
   async sendMedia(
     @CurrentUser() u: any,
     @Body() dto: SendMediaDto,
@@ -7170,28 +8124,101 @@ export class MessagesController {
     return { status: true, data: await this.svc.sendMedia(u.id, dto, file) };
   }
 
-  @UseGuards(JwtAuthGuard)
-  @Post("send-location")
-  @ApiOperation({ summary: "Kirim lokasi" })
+  @Post('send-location')
+  @ApiOperation({ summary: 'Kirim lokasi' })
   async sendLocation(@CurrentUser() u: any, @Body() dto: SendLocationDto) {
     return { status: true, data: await this.svc.sendLocation(u.id, dto) };
   }
 
-  @UseGuards(JwtAuthGuard)
-  @Post("send-poll")
-  @ApiOperation({ summary: "Kirim poll" })
+  @Post('send-poll')
+  @ApiOperation({ summary: 'Kirim poll' })
   async sendPoll(@CurrentUser() u: any, @Body() dto: SendPollDto) {
     return { status: true, data: await this.svc.sendPoll(u.id, dto) };
   }
 
-  @UseGuards(JwtAuthGuard)
-  @Post(":sessionId/messages/:messageId/react")
+  @Post('send-contact')
+  @ApiOperation({ summary: 'Kirim kontak sebagai vCard' })
+  async sendContact(@CurrentUser() u: any, @Body() dto: SendContactDto) {
+    return { status: true, data: await this.svc.sendContact(u.id, dto) };
+  }
+
+  @Patch(':sessionId/messages/:messageId/edit')
+  @ApiOperation({ summary: 'Edit pesan yang sudah dikirim' })
+  async editMessage(
+    @CurrentUser() u: any,
+    @Param('sessionId') sid: string,
+    @Param('messageId') mid: string,
+    @Body() body: { text: string },
+  ) {
+    return {
+      status: true,
+      data: await this.svc.editMessage(u.id, sid, mid, body.text),
+    };
+  }
+
+  @Post(':sessionId/messages/:messageId/forward')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: "React pesan dengan emoji" })
+  @ApiOperation({ summary: 'Forward pesan ke nomor lain' })
+  async forwardMessage(
+    @CurrentUser() u: any,
+    @Param('sessionId') sid: string,
+    @Param('messageId') mid: string,
+    @Body() body: { to: string },
+  ) {
+    return {
+      status: true,
+      data: await this.svc.forwardMessage(u.id, sid, mid, body.to),
+    };
+  }
+
+  @Post(':sessionId/messages/:messageId/pin')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Pin pesan di chat' })
+  async pinMessage(
+    @CurrentUser() u: any,
+    @Param('sessionId') sid: string,
+    @Param('messageId') mid: string,
+    @Body() body: { duration?: number },
+  ) {
+    return {
+      status: true,
+      data: await this.svc.pinMessage(u.id, sid, mid, body.duration),
+    };
+  }
+
+  @Post(':sessionId/messages/:messageId/unpin')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Unpin pesan' })
+  async unpinMessage(
+    @CurrentUser() u: any,
+    @Param('sessionId') sid: string,
+    @Param('messageId') mid: string,
+  ) {
+    return { status: true, data: await this.svc.unpinMessage(u.id, sid, mid) };
+  }
+
+  @Post(':sessionId/messages/:messageId/download')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Download media dari pesan masuk' })
+  async downloadMedia(
+    @CurrentUser() u: any,
+    @Param('sessionId') sid: string,
+    @Param('messageId') mid: string,
+  ) {
+    const storagePath = this.cfg.get<string>('app.storagePath');
+    return {
+      status: true,
+      data: await this.svc.downloadMedia(u.id, sid, mid, storagePath),
+    };
+  }
+
+  @Post(':sessionId/messages/:messageId/react')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'React pesan dengan emoji' })
   async react(
     @CurrentUser() u: any,
-    @Param("sessionId") sid: string,
-    @Param("messageId") mid: string,
+    @Param('sessionId') sid: string,
+    @Param('messageId') mid: string,
     @Body() dto: ReactMessageDto,
   ) {
     return {
@@ -7200,25 +8227,32 @@ export class MessagesController {
     };
   }
 
-  @UseGuards(JwtAuthGuard)
-  @Delete(":sessionId/messages/:messageId")
+  @Delete(':sessionId/messages/:messageId')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: "Hapus pesan" })
+  @ApiOperation({ summary: 'Hapus pesan' })
   async delete(
     @CurrentUser() u: any,
-    @Param("sessionId") sid: string,
-    @Param("messageId") mid: string,
+    @Param('sessionId') sid: string,
+    @Param('messageId') mid: string,
+    @Query('forEveryone') forEveryone?: string,
   ) {
-    return { status: true, data: await this.svc.deleteMessage(u.id, sid, mid) };
+    return {
+      status: true,
+      data: await this.svc.deleteMessage(
+        u.id,
+        sid,
+        mid,
+        forEveryone !== 'false',
+      ),
+    };
   }
 
-  @UseGuards(JwtAuthGuard)
-  @Get("check/:sessionId/:phone")
-  @ApiOperation({ summary: "Cek nomor terdaftar di WA" })
+  @Get('check/:sessionId/:phone')
+  @ApiOperation({ summary: 'Cek nomor terdaftar di WA' })
   async checkRegistered(
     @CurrentUser() u: any,
-    @Param("sessionId") sid: string,
-    @Param("phone") phone: string,
+    @Param('sessionId') sid: string,
+    @Param('phone') phone: string,
   ) {
     return {
       status: true,
@@ -7226,9 +8260,8 @@ export class MessagesController {
     };
   }
 
-  @UseGuards(JwtAuthGuard)
-  @Get("logs")
-  @ApiOperation({ summary: "Riwayat pesan" })
+  @Get('logs')
+  @ApiOperation({ summary: 'Riwayat pesan' })
   async logs(@CurrentUser() u: any, @Query() dto: QueryMessagesDto) {
     const r = await this.svc.getLogs(u.id, dto);
     return {
@@ -7241,6 +8274,23 @@ export class MessagesController {
         totalPages: r.totalPages,
       },
     };
+  }
+
+  @Get('logs/export-pdf')
+  @ApiOperation({ summary: 'Export riwayat pesan sebagai PDF' })
+  async exportLogsPdf(
+    @CurrentUser() u: any,
+    @Query() dto: QueryMessagesDto,
+    @Res() res: Response,
+  ) {
+    const buffer = await this.svc.exportLogsPdf(u.id, dto);
+    const date = new Date().toISOString().split('T')[0].replace(/-/g, '');
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="messages_${date}.pdf"`,
+    );
+    res.send(buffer);
   }
 }
 
@@ -7287,14 +8337,20 @@ import {
   normalizePhone,
   toJid,
 } from '../../common/utils/phone-normalizer.util';
+import { generatePdf } from '../../common/utils/pdf-generator.util';
 import { MessageStatus, MessageType, SessionStatus } from '@prisma/client';
 import { MessageMedia } from 'whatsapp-web.js';
 import { validateMimeType } from '../../common/utils/mime-validator.util';
 import { SendMessageDto } from './dto/send-message.dto';
 import { SendMediaDto } from './dto/send-media.dto';
 import { SendLocationDto } from './dto/send-location.dto';
+import { SendLiveLocationDto } from './dto/send-live-location.dto';
 import { SendPollDto } from './dto/send-poll.dto';
+import { SendContactDto } from './dto/send-contact.dto';
+import { SendVoiceNoteDto } from './dto/send-voice-note.dto';
 import { QueryMessagesDto } from './dto/query-messages.dto';
+import * as fs from 'fs';
+import * as path from 'path';
 
 @Injectable()
 export class MessagesService {
@@ -7418,6 +8474,32 @@ export class MessagesService {
     return { messageId: result?.id?._serialized };
   }
 
+  async sendLiveLocation(userId: string, dto: SendLiveLocationDto) {
+    const sessionId = await this.resolveSession(userId, dto.sessionId);
+    const jid = toJid(dto.to);
+    const client = this.manager.getClient(sessionId);
+    if (!client)
+      throw new BadRequestException({ code: ErrorCodes.SESSION_NOT_CONNECTED });
+    const result = await client.sendMessage(jid, '', {
+      location: {
+        latitude: dto.latitude,
+        longitude: dto.longitude,
+        description: dto.description,
+      },
+      live: true,
+      liveLocationDurationMs: (dto.duration ?? 60) * 1000,
+    } as any);
+    await this.logMessage(
+      userId,
+      sessionId,
+      dto.to,
+      `LiveLocation:${dto.latitude},${dto.longitude}`,
+      MessageType.location,
+      MessageStatus.success,
+    );
+    return { messageId: result?.id?._serialized };
+  }
+
   async sendPoll(userId: string, dto: SendPollDto) {
     const sessionId = await this.resolveSession(userId, dto.sessionId);
     const jid = toJid(dto.to);
@@ -7430,19 +8512,138 @@ export class MessagesService {
     return { messageId: result?.id?._serialized };
   }
 
-  async deleteMessage(
+  async sendContact(userId: string, dto: SendContactDto) {
+    const sessionId = await this.resolveSession(userId, dto.sessionId);
+    const jid = toJid(dto.to);
+    const client = this.manager.getClient(sessionId);
+    if (!client)
+      throw new BadRequestException({ code: ErrorCodes.SESSION_NOT_CONNECTED });
+    const contacts = await Promise.all(
+      dto.contacts.map(async (num) => {
+        const normalized = normalizePhone(num);
+        return client.getContactById(`${normalized}@s.whatsapp.net`);
+      }),
+    );
+    const result = await client.sendMessage(jid, contacts as any);
+    await this.logMessage(
+      userId,
+      sessionId,
+      dto.to,
+      '[vCard]',
+      MessageType.vcard,
+      MessageStatus.success,
+    );
+    return { messageId: result?.id?._serialized };
+  }
+
+  async sendVoiceNote(
+    userId: string,
+    dto: SendVoiceNoteDto,
+    file: Express.Multer.File,
+  ) {
+    const sessionId = await this.resolveSession(userId, dto.sessionId);
+    const jid = toJid(dto.to);
+    const mime = await validateMimeType(file.buffer);
+    const media = new MessageMedia(
+      mime,
+      file.buffer.toString('base64'),
+      file.originalname,
+    );
+    const client = this.manager.getClient(sessionId);
+    if (!client)
+      throw new BadRequestException({ code: ErrorCodes.SESSION_NOT_CONNECTED });
+    const result = await client.sendMessage(jid, media, {
+      sendAudioAsVoice: true,
+    } as any);
+    await this.logMessage(
+      userId,
+      sessionId,
+      dto.to,
+      '[VoiceNote]',
+      MessageType.audio,
+      MessageStatus.success,
+    );
+    return { messageId: result?.id?._serialized };
+  }
+
+  async editMessage(
     userId: string,
     sessionId: string,
     messageId: string,
-    forEveryone = true,
+    newText: string,
   ) {
     const client = this.manager.getClient(sessionId);
     if (!client)
       throw new BadRequestException({ code: ErrorCodes.SESSION_NOT_CONNECTED });
     const msg = await client.getMessageById(messageId);
     if (!msg) throw new NotFoundException({ code: ErrorCodes.NOT_FOUND });
-    await msg.delete(forEveryone);
-    return { deleted: true };
+    const result = await (msg as any).edit(newText);
+    return { edited: true, messageId: result?.id?._serialized };
+  }
+
+  async forwardMessage(
+    userId: string,
+    sessionId: string,
+    messageId: string,
+    to: string,
+  ) {
+    const client = this.manager.getClient(sessionId);
+    if (!client)
+      throw new BadRequestException({ code: ErrorCodes.SESSION_NOT_CONNECTED });
+    const msg = await client.getMessageById(messageId);
+    if (!msg) throw new NotFoundException({ code: ErrorCodes.NOT_FOUND });
+    const jid = toJid(to);
+    await msg.forward(jid);
+    return { forwarded: true };
+  }
+
+  async pinMessage(
+    userId: string,
+    sessionId: string,
+    messageId: string,
+    duration?: number,
+  ) {
+    const client = this.manager.getClient(sessionId);
+    if (!client)
+      throw new BadRequestException({ code: ErrorCodes.SESSION_NOT_CONNECTED });
+    const msg = await client.getMessageById(messageId);
+    if (!msg) throw new NotFoundException({ code: ErrorCodes.NOT_FOUND });
+    await (msg as any).pin(duration);
+    return { pinned: true };
+  }
+
+  async unpinMessage(userId: string, sessionId: string, messageId: string) {
+    const client = this.manager.getClient(sessionId);
+    if (!client)
+      throw new BadRequestException({ code: ErrorCodes.SESSION_NOT_CONNECTED });
+    const msg = await client.getMessageById(messageId);
+    if (!msg) throw new NotFoundException({ code: ErrorCodes.NOT_FOUND });
+    await (msg as any).unpin();
+    return { unpinned: true };
+  }
+
+  async downloadMedia(
+    userId: string,
+    sessionId: string,
+    messageId: string,
+    storagePath: string,
+  ) {
+    const client = this.manager.getClient(sessionId);
+    if (!client)
+      throw new BadRequestException({ code: ErrorCodes.SESSION_NOT_CONNECTED });
+    const msg = await client.getMessageById(messageId);
+    if (!msg) throw new NotFoundException({ code: ErrorCodes.NOT_FOUND });
+    if (!msg.hasMedia)
+      throw new BadRequestException({ code: ErrorCodes.VALIDATION });
+    const media = await msg.downloadMedia();
+    if (!media) throw new BadRequestException({ code: ErrorCodes.SEND_FAILED });
+    const ext = media.mimetype.split('/')[1]?.split(';')[0] ?? 'bin';
+    const filename = `${messageId}.${ext}`;
+    const dir = path.join(storagePath, 'uploads', userId);
+    fs.mkdirSync(dir, { recursive: true });
+    const filePath = path.join(dir, filename);
+    fs.writeFileSync(filePath, Buffer.from(media.data, 'base64'));
+    return { filename, mimetype: media.mimetype, path: filePath };
   }
 
   async reactMessage(
@@ -7458,6 +8659,21 @@ export class MessagesService {
     if (!msg) throw new NotFoundException({ code: ErrorCodes.NOT_FOUND });
     await msg.react(reaction);
     return { reacted: true };
+  }
+
+  async deleteMessage(
+    userId: string,
+    sessionId: string,
+    messageId: string,
+    forEveryone = true,
+  ) {
+    const client = this.manager.getClient(sessionId);
+    if (!client)
+      throw new BadRequestException({ code: ErrorCodes.SESSION_NOT_CONNECTED });
+    const msg = await client.getMessageById(messageId);
+    if (!msg) throw new NotFoundException({ code: ErrorCodes.NOT_FOUND });
+    await msg.delete(forEveryone);
+    return { deleted: true };
   }
 
   async isRegisteredUser(userId: string, sessionId: string, phone: string) {
@@ -7488,6 +8704,28 @@ export class MessagesService {
       this.prisma.messageLog.count({ where }),
     ]);
     return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
+  }
+
+  async exportLogsPdf(userId: string, dto: QueryMessagesDto): Promise<Buffer> {
+    const where: any = { userId };
+    if (dto.status) where.status = dto.status;
+    if (dto.sessionId) where.sessionId = dto.sessionId;
+
+    const data = await this.prisma.messageLog.findMany({
+      where,
+      take: 1000,
+      orderBy: { timestamp: 'desc' },
+    });
+
+    const rows = data.map((r) => ({
+      timestamp: new Date(r.timestamp).toLocaleString('id-ID'),
+      target: r.target,
+      type: r.messageType,
+      status: r.status,
+      message: String(r.message ?? '').slice(0, 50),
+    }));
+
+    return generatePdf('Riwayat Pesan', rows);
   }
 
   private async resolveSession(
@@ -7552,6 +8790,39 @@ export class MessagesService {
 ## File : `src/modules/notifications/dto/send-notification.dto.ts`
 
 ```ts
+import { IsString, IsNotEmpty, IsOptional, IsEnum } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+
+export enum NotificationType {
+  EMAIL = 'email',
+  SOCKET = 'socket',
+  BOTH = 'both',
+}
+
+export class SendNotificationDto {
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  userId: string;
+
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  message: string;
+
+  @ApiPropertyOptional({
+    enum: NotificationType,
+    default: NotificationType.SOCKET,
+  })
+  @IsOptional()
+  @IsEnum(NotificationType)
+  type?: NotificationType = NotificationType.SOCKET;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  subject?: string;
+}
 
 ```
 ---
@@ -7653,6 +8924,426 @@ export class NotificationsService {
       "Gemini AI Disabled",
       "API key Gemini tidak valid, AI Smart Reply dinonaktifkan.",
     );
+  }
+}
+
+```
+---
+
+## File : `src/modules/profile/profile.controller.ts`
+
+```ts
+import {
+  Controller,
+  Get,
+  Post,
+  Delete,
+  Param,
+  Body,
+  UseGuards,
+  UploadedFile,
+  UseInterceptors,
+  HttpCode,
+  HttpStatus,
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
+import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import { ProfileService } from './profile.service';
+import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+
+@ApiTags('Profile')
+@UseGuards(JwtAuthGuard)
+@Controller({ path: 'profile', version: '1' })
+export class ProfileController {
+  constructor(private svc: ProfileService) {}
+
+  @Get(':sessionId')
+  @ApiOperation({ summary: 'Dapatkan info profil akun WA' })
+  async getProfile(@Param('sessionId') sid: string) {
+    return { status: true, data: await this.svc.getProfile(sid) };
+  }
+
+  @Post(':sessionId/display-name')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Set display name akun WA' })
+  async setDisplayName(
+    @Param('sessionId') sid: string,
+    @Body() body: { name: string },
+  ) {
+    return {
+      status: true,
+      data: await this.svc.setDisplayName(sid, body.name),
+    };
+  }
+
+  @Post(':sessionId/status')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Set status/bio akun WA' })
+  async setStatus(
+    @Param('sessionId') sid: string,
+    @Body() body: { status: string },
+  ) {
+    return { status: true, data: await this.svc.setStatus(sid, body.status) };
+  }
+
+  @Post(':sessionId/photo')
+  @UseInterceptors(FileInterceptor('file', { storage: memoryStorage() }))
+  @ApiOperation({ summary: 'Upload foto profil akun WA' })
+  async setPhoto(
+    @Param('sessionId') sid: string,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    return { status: true, data: await this.svc.setProfilePhoto(sid, file) };
+  }
+
+  @Delete(':sessionId/photo')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Hapus foto profil akun WA' })
+  async deletePhoto(@Param('sessionId') sid: string) {
+    return { status: true, data: await this.svc.deleteProfilePhoto(sid) };
+  }
+
+  @Get(':sessionId/contacts')
+  @ApiOperation({ summary: 'Dapatkan semua kontak dari WA' })
+  async getAllContacts(@Param('sessionId') sid: string) {
+    return { status: true, data: await this.svc.getAllContacts(sid) };
+  }
+
+  @Get(':sessionId/contacts/:contactId')
+  @ApiOperation({ summary: 'Dapatkan kontak by ID' })
+  async getContact(
+    @Param('sessionId') sid: string,
+    @Param('contactId') cid: string,
+  ) {
+    return { status: true, data: await this.svc.getContactById(sid, cid) };
+  }
+
+  @Get(':sessionId/contacts/:contactId/photo')
+  @ApiOperation({ summary: 'Dapatkan foto profil kontak' })
+  async getContactPhoto(
+    @Param('sessionId') sid: string,
+    @Param('contactId') cid: string,
+  ) {
+    return {
+      status: true,
+      data: await this.svc.getContactProfilePhoto(sid, cid),
+    };
+  }
+
+  @Post(':sessionId/contacts/:contactId/block')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Blokir kontak' })
+  async blockContact(
+    @Param('sessionId') sid: string,
+    @Param('contactId') cid: string,
+  ) {
+    return { status: true, data: await this.svc.blockContact(sid, cid) };
+  }
+
+  @Post(':sessionId/contacts/:contactId/unblock')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Unblokir kontak' })
+  async unblockContact(
+    @Param('sessionId') sid: string,
+    @Param('contactId') cid: string,
+  ) {
+    return { status: true, data: await this.svc.unblockContact(sid, cid) };
+  }
+
+  @Get(':sessionId/contacts/blocked')
+  @ApiOperation({ summary: 'Dapatkan daftar kontak yang diblokir' })
+  async getBlockedContacts(@Param('sessionId') sid: string) {
+    return { status: true, data: await this.svc.getBlockedContacts(sid) };
+  }
+}
+
+```
+---
+
+## File : `src/modules/profile/profile.module.ts`
+
+```ts
+import { Module } from '@nestjs/common';
+import { ProfileController } from './profile.controller';
+import { ProfileService } from './profile.service';
+import { SessionsModule } from '../sessions/sessions.module';
+
+@Module({
+  imports: [SessionsModule],
+  controllers: [ProfileController],
+  providers: [ProfileService],
+})
+export class ProfileModule {}
+
+```
+---
+
+## File : `src/modules/profile/profile.service.ts`
+
+```ts
+import { Injectable, BadRequestException } from '@nestjs/common';
+import { SessionManagerService } from '../sessions/session-manager.service';
+import { ErrorCodes } from '../../common/constants/error-codes.constant';
+import { MessageMedia } from 'whatsapp-web.js';
+import { validateMimeType } from '../../common/utils/mime-validator.util';
+
+@Injectable()
+export class ProfileService {
+  constructor(private manager: SessionManagerService) {}
+
+  private client(sessionId: string) {
+    const c = this.manager.getClient(sessionId);
+    if (!c)
+      throw new BadRequestException({ code: ErrorCodes.SESSION_NOT_CONNECTED });
+    return c;
+  }
+
+  async getProfile(sessionId: string) {
+    const c = this.client(sessionId);
+    const info = c.info;
+    return {
+      wid: info?.wid,
+      pushname: info?.pushname,
+      platform: info?.platform,
+    };
+  }
+
+  async setDisplayName(sessionId: string, name: string) {
+    const c = this.client(sessionId);
+    await (c as any).setDisplayName(name);
+    return { updated: true };
+  }
+
+  async setStatus(sessionId: string, status: string) {
+    await (this.client(sessionId) as any).setStatus(status);
+    return { updated: true };
+  }
+
+  async setProfilePhoto(sessionId: string, file: Express.Multer.File) {
+    await validateMimeType(file.buffer);
+    const media = new MessageMedia(
+      'image/jpeg',
+      file.buffer.toString('base64'),
+      file.originalname,
+    );
+    await (this.client(sessionId) as any).setProfilePicture(media);
+    return { updated: true };
+  }
+
+  async deleteProfilePhoto(sessionId: string) {
+    await (this.client(sessionId) as any).deleteProfilePicture();
+    return { deleted: true };
+  }
+
+  async getContactProfilePhoto(sessionId: string, contactId: string) {
+    const url = await this.client(sessionId).getProfilePicUrl(contactId);
+    return { url };
+  }
+
+  async blockContact(sessionId: string, contactId: string) {
+    const contact = await this.client(sessionId).getContactById(contactId);
+    await contact.block();
+    return { blocked: true };
+  }
+
+  async unblockContact(sessionId: string, contactId: string) {
+    const contact = await this.client(sessionId).getContactById(contactId);
+    await contact.unblock();
+    return { unblocked: true };
+  }
+
+  async getBlockedContacts(sessionId: string) {
+    return (this.client(sessionId) as any).getBlockedContacts();
+  }
+
+  async getContactById(sessionId: string, contactId: string) {
+    return this.client(sessionId).getContactById(contactId);
+  }
+
+  async getAllContacts(sessionId: string) {
+    return this.client(sessionId).getContacts();
+  }
+}
+
+```
+---
+
+## File : `src/modules/scheduled-event/dto/create-scheduled-event.dto.ts`
+
+```ts
+import {
+  IsString,
+  IsNotEmpty,
+  IsDateString,
+  IsOptional,
+  IsNumber,
+} from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+
+export class CreateScheduledEventDto {
+  @ApiProperty() @IsString() @IsNotEmpty() to: string;
+  @ApiProperty() @IsString() @IsNotEmpty() title: string;
+  @ApiProperty() @IsDateString() startTime: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() description?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() location?: string;
+  @ApiPropertyOptional({ default: 'auto' })
+  @IsOptional()
+  @IsString()
+  sessionId?: string = 'auto';
+}
+
+```
+---
+
+## File : `src/modules/scheduled-event/dto/respond-event.dto.ts`
+
+```ts
+import { IsString, IsNotEmpty, IsEnum } from 'class-validator';
+import { ApiProperty } from '@nestjs/swagger';
+
+export enum EventResponse {
+  ACCEPT = 'accept',
+  DECLINE = 'decline',
+}
+
+export class RespondEventDto {
+  @ApiProperty() @IsString() @IsNotEmpty() messageId: string;
+  @ApiProperty({ enum: EventResponse })
+  @IsEnum(EventResponse)
+  response: EventResponse;
+  @ApiProperty() @IsString() @IsNotEmpty() sessionId: string;
+}
+
+```
+---
+
+## File : `src/modules/scheduled-event/scheduled-event.controller.ts`
+
+```ts
+import { Controller, Post, Body, UseGuards } from '@nestjs/common';
+import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import { ScheduledEventService } from './scheduled-event.service';
+import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { CreateScheduledEventDto } from './dto/create-scheduled-event.dto';
+import { RespondEventDto } from './dto/respond-event.dto';
+
+@ApiTags('Scheduled Event')
+@UseGuards(JwtAuthGuard)
+@Controller({ path: 'scheduled-events', version: '1' })
+export class ScheduledEventController {
+  constructor(private svc: ScheduledEventService) {}
+
+  @Post('send')
+  @ApiOperation({ summary: 'Kirim undangan Scheduled Event ke WA' })
+  async send(@CurrentUser() u: any, @Body() dto: CreateScheduledEventDto) {
+    return { status: true, data: await this.svc.send(u.id, dto) };
+  }
+
+  @Post('respond')
+  @ApiOperation({
+    summary: 'Accept atau decline Scheduled Event yang diterima',
+  })
+  async respond(@CurrentUser() u: any, @Body() dto: RespondEventDto) {
+    return { status: true, data: await this.svc.respond(u.id, dto) };
+  }
+}
+
+```
+---
+
+## File : `src/modules/scheduled-event/scheduled-event.module.ts`
+
+```ts
+import { Module } from '@nestjs/common';
+import { ScheduledEventController } from './scheduled-event.controller';
+import { ScheduledEventService } from './scheduled-event.service';
+import { SessionsModule } from '../sessions/sessions.module';
+
+@Module({
+  imports: [SessionsModule],
+  controllers: [ScheduledEventController],
+  providers: [ScheduledEventService],
+})
+export class ScheduledEventModule {}
+
+```
+---
+
+## File : `src/modules/scheduled-event/scheduled-event.service.ts`
+
+```ts
+import { Injectable, BadRequestException } from '@nestjs/common';
+import { PrismaService } from '../../prisma/prisma.service';
+import { SessionManagerService } from '../sessions/session-manager.service';
+import { ErrorCodes } from '../../common/constants/error-codes.constant';
+import { toJid } from '../../common/utils/phone-normalizer.util';
+import { SessionStatus } from '@prisma/client';
+import { CreateScheduledEventDto } from './dto/create-scheduled-event.dto';
+import { RespondEventDto, EventResponse } from './dto/respond-event.dto';
+
+@Injectable()
+export class ScheduledEventService {
+  constructor(
+    private prisma: PrismaService,
+    private manager: SessionManagerService,
+  ) {}
+
+  async send(userId: string, dto: CreateScheduledEventDto) {
+    const sessionId = await this.resolveSession(userId, dto.sessionId);
+    const client = this.manager.getClient(sessionId);
+    if (!client)
+      throw new BadRequestException({ code: ErrorCodes.SESSION_NOT_CONNECTED });
+
+    const jid = toJid(dto.to);
+    const result = await client.sendMessage(jid, dto.title, {
+      scheduledEvent: {
+        title: dto.title,
+        description: dto.description ?? '',
+        location: dto.location ?? '',
+        startTime: new Date(dto.startTime).getTime(),
+      },
+    } as any);
+
+    return { messageId: result?.id?._serialized };
+  }
+
+  async respond(userId: string, dto: RespondEventDto) {
+    const client = this.manager.getClient(dto.sessionId);
+    if (!client)
+      throw new BadRequestException({ code: ErrorCodes.SESSION_NOT_CONNECTED });
+
+    const msg = await client.getMessageById(dto.messageId);
+    if (!msg) throw new BadRequestException({ code: ErrorCodes.NOT_FOUND });
+
+    if (dto.response === EventResponse.ACCEPT) {
+      await (msg as any).acceptScheduledEvent?.();
+    } else {
+      await (msg as any).declineScheduledEvent?.();
+    }
+
+    return { responded: true, response: dto.response };
+  }
+
+  private async resolveSession(
+    userId: string,
+    sessionId?: string,
+  ): Promise<string> {
+    if (sessionId && sessionId !== 'auto') {
+      const s = await this.prisma.whatsappSession.findFirst({
+        where: { id: sessionId, userId, status: SessionStatus.connected },
+      });
+      if (!s)
+        throw new BadRequestException({
+          code: ErrorCodes.SESSION_NOT_CONNECTED,
+        });
+      return sessionId;
+    }
+    const healthy = await this.manager.getHealthySession(userId);
+    if (!healthy)
+      throw new BadRequestException({ code: ErrorCodes.NO_SESSIONS });
+    return healthy;
   }
 }
 
@@ -8722,31 +10413,41 @@ export class UpdateSettingsDto {
 ## File : `src/modules/settings/settings.controller.ts`
 
 ```ts
-import { Controller, Get, Post, Body, UseGuards } from "@nestjs/common";
-import { ApiTags, ApiOperation } from "@nestjs/swagger";
-import { SettingsService } from "./settings.service";
-import { JwtAuthGuard } from "../../common/guards/jwt-auth.guard";
-import { RolesGuard } from "../../common/guards/roles.guard";
-import { Roles } from "../../common/decorators/roles.decorator";
-import { CurrentUser } from "../../common/decorators/current-user.decorator";
-import { Role } from "../../common/enums/role.enum";
-import { UpdateSettingsDto } from "./dto/update-settings.dto";
-import { UpdateGlobalSettingsDto } from "./dto/update-global-settings.dto";
+import { Controller, Get, Post, Body, UseGuards } from '@nestjs/common';
+import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import { SettingsService } from './settings.service';
+import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../../common/guards/roles.guard';
+import { Roles } from '../../common/decorators/roles.decorator';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { Role } from '../../common/enums/role.enum';
+import { UpdateSettingsDto } from './dto/update-settings.dto';
+import { UpdateGlobalSettingsDto } from './dto/update-global-settings.dto';
+import { IsBoolean, IsString, IsNotEmpty } from 'class-validator';
+import { ApiProperty } from '@nestjs/swagger';
 
-@ApiTags("Settings")
+class MaintenanceModeDto {
+  @ApiProperty() @IsBoolean() enabled: boolean;
+}
+
+class AnnouncementDto {
+  @ApiProperty() @IsString() @IsNotEmpty() message: string;
+}
+
+@ApiTags('Settings')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Controller({ path: "settings", version: "1" })
+@Controller({ path: 'settings', version: '1' })
 export class SettingsController {
   constructor(private svc: SettingsService) {}
 
-  @Get("me")
-  @ApiOperation({ summary: "Dapatkan pengaturan user" })
+  @Get('me')
+  @ApiOperation({ summary: 'Dapatkan pengaturan user' })
   async getMySettings(@CurrentUser() u: any) {
     return { status: true, data: await this.svc.getUserSettings(u.id) };
   }
 
-  @Post("me")
-  @ApiOperation({ summary: "Update pengaturan user" })
+  @Post('me')
+  @ApiOperation({ summary: 'Update pengaturan user' })
   async updateMySettings(
     @CurrentUser() u: any,
     @Body() dto: UpdateSettingsDto,
@@ -8755,17 +10456,37 @@ export class SettingsController {
   }
 
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
-  @Get("global")
-  @ApiOperation({ summary: "[Admin] Dapatkan pengaturan global" })
+  @Get('global')
+  @ApiOperation({ summary: '[Admin] Dapatkan pengaturan global' })
   async getGlobal() {
     return { status: true, data: await this.svc.getGlobalSettings() };
   }
 
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
-  @Post("global")
-  @ApiOperation({ summary: "[Admin] Update pengaturan global" })
+  @Post('global')
+  @ApiOperation({ summary: '[Admin] Update pengaturan global' })
   async updateGlobal(@Body() dto: UpdateGlobalSettingsDto) {
     return { status: true, data: await this.svc.updateGlobalSettings(dto) };
+  }
+
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @Post('maintenance')
+  @ApiOperation({ summary: '[Admin] Aktifkan / nonaktifkan maintenance mode' })
+  async setMaintenance(@Body() dto: MaintenanceModeDto) {
+    return {
+      status: true,
+      data: await this.svc.setMaintenanceMode(dto.enabled),
+    };
+  }
+
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @Post('announcement')
+  @ApiOperation({ summary: '[Admin] Broadcast pengumuman ke semua user' })
+  async sendAnnouncement(@CurrentUser() u: any, @Body() dto: AnnouncementDto) {
+    return {
+      status: true,
+      data: await this.svc.broadcastAnnouncement(dto.message, u.id),
+    };
   }
 }
 
@@ -8775,13 +10496,14 @@ export class SettingsController {
 ## File : `src/modules/settings/settings.module.ts`
 
 ```ts
-import { Module } from "@nestjs/common";
-import { SettingsController } from "./settings.controller";
-import { SettingsService } from "./settings.service";
-import { AiModule } from "../ai/ai.module";
+import { Module } from '@nestjs/common';
+import { SettingsController } from './settings.controller';
+import { SettingsService } from './settings.service';
+import { AiModule } from '../ai/ai.module';
+import { GatewayModule } from '../../gateway/gateway.module';
 
 @Module({
-  imports: [AiModule],
+  imports: [AiModule, GatewayModule],
   controllers: [SettingsController],
   providers: [SettingsService],
   exports: [SettingsService],
@@ -8794,17 +10516,19 @@ export class SettingsModule {}
 ## File : `src/modules/settings/settings.service.ts`
 
 ```ts
-import { Injectable } from "@nestjs/common";
-import { PrismaService } from "../../prisma/prisma.service";
-import { AiService } from "../ai/ai.service";
-import { UpdateSettingsDto } from "./dto/update-settings.dto";
-import { UpdateGlobalSettingsDto } from "./dto/update-global-settings.dto";
+import { Injectable } from '@nestjs/common';
+import { PrismaService } from '../../prisma/prisma.service';
+import { AiService } from '../ai/ai.service';
+import { GatewayService } from '../../gateway/gateway.service';
+import { UpdateSettingsDto } from './dto/update-settings.dto';
+import { UpdateGlobalSettingsDto } from './dto/update-global-settings.dto';
 
 @Injectable()
 export class SettingsService {
   constructor(
     private prisma: PrismaService,
     private ai: AiService,
+    private gateway: GatewayService,
   ) {}
 
   async getUserSettings(userId: string) {
@@ -8847,6 +10571,33 @@ export class SettingsService {
     );
     return this.getGlobalSettings();
   }
+
+  async setMaintenanceMode(enabled: boolean) {
+    await this.prisma.globalSetting.upsert({
+      where: { key: 'maintenanceMode' },
+      create: { key: 'maintenanceMode', value: String(enabled) },
+      update: { value: String(enabled) },
+    });
+    return { maintenanceMode: enabled };
+  }
+
+  async isMaintenanceMode(): Promise<boolean> {
+    const row = await this.prisma.globalSetting.findUnique({
+      where: { key: 'maintenanceMode' },
+    });
+    return row?.value === 'true';
+  }
+
+  async broadcastAnnouncement(message: string, adminId: string) {
+    const users = await this.prisma.user.findMany({
+      where: { isActive: true },
+      select: { id: true },
+    });
+    for (const user of users) {
+      this.gateway.emitSystemAlert(user.id, 'announcement', message);
+    }
+    return { sent: users.length };
+  }
 }
 
 ```
@@ -8855,6 +10606,35 @@ export class SettingsService {
 ## File : `src/modules/status/dto/send-status.dto.ts`
 
 ```ts
+import { IsString, IsNotEmpty, IsOptional, IsEnum } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+
+export enum StatusType {
+  TEXT = 'text',
+  IMAGE = 'image',
+  VIDEO = 'video',
+}
+
+export class SendStatusDto {
+  @ApiProperty({ enum: StatusType })
+  @IsEnum(StatusType)
+  type: StatusType;
+
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  content: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  backgroundColor?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  font?: string;
+}
 
 ```
 ---
@@ -10476,6 +12256,15 @@ export class WorkflowService {
 ## File : `src/modules/workspace/dto/create-workspace.dto.ts`
 
 ```ts
+import { IsString, IsNotEmpty } from 'class-validator';
+import { ApiProperty } from '@nestjs/swagger';
+
+export class CreateWorkspaceDto {
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  name: string;
+}
 
 ```
 ---
@@ -10483,6 +12272,15 @@ export class WorkflowService {
 ## File : `src/modules/workspace/dto/invite-member.dto.ts`
 
 ```ts
+import { IsString, IsNotEmpty, IsEmail } from 'class-validator';
+import { ApiProperty } from '@nestjs/swagger';
+
+export class InviteMemberDto {
+  @ApiProperty()
+  @IsEmail()
+  @IsNotEmpty()
+  email: string;
+}
 
 ```
 ---
@@ -10490,6 +12288,31 @@ export class WorkflowService {
 ## File : `src/modules/workspace/dto/update-member-permission.dto.ts`
 
 ```ts
+import {
+  IsString,
+  IsNotEmpty,
+  IsEnum,
+  IsOptional,
+  IsObject,
+} from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+
+export enum WorkspaceMemberRole {
+  ADMIN = 'admin',
+  MEMBER = 'member',
+}
+
+export class UpdateMemberPermissionDto {
+  @ApiPropertyOptional({ enum: WorkspaceMemberRole })
+  @IsOptional()
+  @IsEnum(WorkspaceMemberRole)
+  role?: WorkspaceMemberRole;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsObject()
+  permissions?: Record<string, boolean>;
+}
 
 ```
 ---
@@ -10501,6 +12324,7 @@ import {
   Controller,
   Get,
   Post,
+  Put,
   Delete,
   Param,
   Body,
@@ -10508,28 +12332,33 @@ import {
   Req,
   HttpCode,
   HttpStatus,
-} from "@nestjs/common";
-import { ApiTags, ApiOperation } from "@nestjs/swagger";
-import { Request } from "express";
-import { WorkspaceService } from "./workspace.service";
-import { JwtAuthGuard } from "../../common/guards/jwt-auth.guard";
-import { CurrentUser } from "../../common/decorators/current-user.decorator";
+} from '@nestjs/common';
+import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import { Request } from 'express';
+import { WorkspaceService } from './workspace.service';
+import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { CreateWorkspaceDto } from './dto/create-workspace.dto';
+import { InviteMemberDto } from './dto/invite-member.dto';
+import { UpdateMemberPermissionDto } from './dto/update-member-permission.dto';
 
-@ApiTags("Workspace")
+@ApiTags('Workspace')
 @UseGuards(JwtAuthGuard)
-@Controller({ path: "workspaces", version: "1" })
+@Controller({ path: 'workspaces', version: '1' })
 export class WorkspaceController {
   constructor(private svc: WorkspaceService) {}
 
   @Get()
+  @ApiOperation({ summary: 'Daftar workspace yang diikuti' })
   async findAll(@CurrentUser() u: any) {
     return { status: true, data: await this.svc.findAll(u.id) };
   }
 
   @Post()
+  @ApiOperation({ summary: 'Buat workspace baru' })
   async create(
     @CurrentUser() u: any,
-    @Body() body: { name: string },
+    @Body() dto: CreateWorkspaceDto,
     @Req() req: Request,
   ) {
     return {
@@ -10537,19 +12366,20 @@ export class WorkspaceController {
       data: await this.svc.create(
         u.id,
         u.email,
-        body.name,
+        dto.name,
         req.ip,
-        req.headers["user-agent"],
+        req.headers['user-agent'],
       ),
     };
   }
 
-  @Post(":id/invite")
+  @Post(':id/invite')
   @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Undang anggota ke workspace' })
   async invite(
     @CurrentUser() u: any,
-    @Param("id") id: string,
-    @Body() body: { email: string },
+    @Param('id') id: string,
+    @Body() dto: InviteMemberDto,
     @Req() req: Request,
   ) {
     return {
@@ -10558,19 +12388,34 @@ export class WorkspaceController {
         u.id,
         u.email,
         id,
-        body.email,
+        dto.email,
         req.ip,
-        req.headers["user-agent"],
+        req.headers['user-agent'],
       ),
     };
   }
 
-  @Delete(":id/members/:memberId")
+  @Put(':id/members/:memberId/permission')
+  @ApiOperation({ summary: 'Update role atau permission anggota workspace' })
+  async updateMemberPermission(
+    @CurrentUser() u: any,
+    @Param('id') id: string,
+    @Param('memberId') mid: string,
+    @Body() dto: UpdateMemberPermissionDto,
+  ) {
+    return {
+      status: true,
+      data: await this.svc.updateMemberPermission(u.id, id, mid, dto),
+    };
+  }
+
+  @Delete(':id/members/:memberId')
   @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Hapus anggota dari workspace' })
   async removeMember(
     @CurrentUser() u: any,
-    @Param("id") id: string,
-    @Param("memberId") mid: string,
+    @Param('id') id: string,
+    @Param('memberId') mid: string,
     @Req() req: Request,
   ) {
     await this.svc.removeMember(
@@ -10579,7 +12424,7 @@ export class WorkspaceController {
       id,
       mid,
       req.ip,
-      req.headers["user-agent"],
+      req.headers['user-agent'],
     );
     return { status: true };
   }
@@ -10613,11 +12458,12 @@ import {
   Injectable,
   NotFoundException,
   ForbiddenException,
-} from "@nestjs/common";
-import { PrismaService } from "../../prisma/prisma.service";
-import { AuditService } from "../audit/audit.service";
-import { AuditAction } from "@prisma/client";
-import { ErrorCodes } from "../../common/constants/error-codes.constant";
+} from '@nestjs/common';
+import { PrismaService } from '../../prisma/prisma.service';
+import { AuditService } from '../audit/audit.service';
+import { AuditAction } from '@prisma/client';
+import { ErrorCodes } from '../../common/constants/error-codes.constant';
+import { UpdateMemberPermissionDto } from './dto/update-member-permission.dto';
 
 @Injectable()
 export class WorkspaceService {
@@ -10637,7 +12483,7 @@ export class WorkspaceService {
       data: {
         name,
         ownerId: userId,
-        members: { create: { userId, role: "owner" } },
+        members: { create: { userId, role: 'owner' } },
       },
       include: { members: true },
     });
@@ -10679,7 +12525,7 @@ export class WorkspaceService {
     if (!user) throw new NotFoundException({ code: ErrorCodes.NOT_FOUND });
     const member = await this.prisma.workspaceMember.upsert({
       where: { workspaceId_userId: { workspaceId, userId: user.id } },
-      create: { workspaceId, userId: user.id, role: "member" },
+      create: { workspaceId, userId: user.id, role: 'member' },
       update: {},
     });
     await this.audit.log({
@@ -10691,6 +12537,27 @@ export class WorkspaceService {
       userAgent: ua,
     });
     return member;
+  }
+
+  async updateMemberPermission(
+    ownerId: string,
+    workspaceId: string,
+    memberId: string,
+    dto: UpdateMemberPermissionDto,
+  ) {
+    const ws = await this.prisma.workspace.findFirst({
+      where: { id: workspaceId, ownerId },
+    });
+    if (!ws) throw new NotFoundException({ code: ErrorCodes.NOT_FOUND });
+    if (memberId === ownerId)
+      throw new ForbiddenException({ code: ErrorCodes.FORBIDDEN });
+    return this.prisma.workspaceMember.updateMany({
+      where: { workspaceId, userId: memberId },
+      data: {
+        ...(dto.role ? { role: dto.role } : {}),
+        ...(dto.permissions ? { permissions: dto.permissions } : {}),
+      },
+    });
   }
 
   async removeMember(
@@ -11027,6 +12894,7 @@ export const mockPrismaService = {
     deleteMany: jest.fn(),
   },
   globalSetting: {
+    findUnique: jest.fn(),
     findMany: jest.fn(),
     upsert: jest.fn(),
   },
@@ -11046,6 +12914,7 @@ export const mockPrismaService = {
   },
   workspaceMember: {
     upsert: jest.fn(),
+    updateMany: jest.fn(),
     deleteMany: jest.fn(),
   },
   $transaction: jest.fn((cb) => cb(mockPrismaService)),
@@ -11090,27 +12959,80 @@ export const mockWhatsappClient = {
   destroy: jest.fn().mockResolvedValue(undefined),
   sendMessage: jest
     .fn()
-    .mockResolvedValue({ id: { _serialized: "mock-msg-id" } }),
+    .mockResolvedValue({ id: { _serialized: 'mock-msg-id' } }),
   sendPresenceAvailable: jest.fn().mockResolvedValue(undefined),
   sendPresenceUnavailable: jest.fn().mockResolvedValue(undefined),
-  getState: jest.fn().mockResolvedValue("CONNECTED"),
-  getWWebVersion: jest.fn().mockResolvedValue("2.2000.0"),
+  getState: jest.fn().mockResolvedValue('CONNECTED'),
+  getWWebVersion: jest.fn().mockResolvedValue('2.2000.0'),
   isRegisteredUser: jest.fn().mockResolvedValue(true),
   getChats: jest.fn().mockResolvedValue([]),
-  getChatById: jest
-    .fn()
-    .mockResolvedValue({ id: { _serialized: "mock-chat" } }),
-  getMessageById: jest
-    .fn()
-    .mockResolvedValue({ delete: jest.fn(), react: jest.fn() }),
+  getChatById: jest.fn().mockResolvedValue({
+    id: { _serialized: 'mock-chat' },
+    archive: jest.fn().mockResolvedValue(undefined),
+    unarchive: jest.fn().mockResolvedValue(undefined),
+    mute: jest.fn().mockResolvedValue(undefined),
+    unmute: jest.fn().mockResolvedValue(undefined),
+    pin: jest.fn().mockResolvedValue(undefined),
+    unpin: jest.fn().mockResolvedValue(undefined),
+    delete: jest.fn().mockResolvedValue(undefined),
+    sendSeen: jest.fn().mockResolvedValue(undefined),
+    addParticipants: jest.fn().mockResolvedValue(undefined),
+    removeParticipants: jest.fn().mockResolvedValue(undefined),
+    promoteParticipants: jest.fn().mockResolvedValue(undefined),
+    demoteParticipants: jest.fn().mockResolvedValue(undefined),
+    setSubject: jest.fn().mockResolvedValue(undefined),
+    setDescription: jest.fn().mockResolvedValue(undefined),
+    leave: jest.fn().mockResolvedValue(undefined),
+    getInviteCode: jest.fn().mockResolvedValue('abc123'),
+    revokeInvite: jest.fn().mockResolvedValue(undefined),
+    approveGroupMembershipRequests: jest.fn().mockResolvedValue(undefined),
+    rejectGroupMembershipRequests: jest.fn().mockResolvedValue(undefined),
+    getGroupMembershipRequests: jest.fn().mockResolvedValue([]),
+  }),
+  getMessageById: jest.fn().mockResolvedValue({
+    id: { _serialized: 'mock-msg-id' },
+    hasMedia: true,
+    delete: jest.fn().mockResolvedValue(undefined),
+    react: jest.fn().mockResolvedValue(undefined),
+    edit: jest.fn().mockResolvedValue({ id: { _serialized: 'mock-msg-id' } }),
+    forward: jest.fn().mockResolvedValue(undefined),
+    pin: jest.fn().mockResolvedValue(undefined),
+    unpin: jest.fn().mockResolvedValue(undefined),
+    star: jest.fn().mockResolvedValue(undefined),
+    downloadMedia: jest.fn().mockResolvedValue({
+      mimetype: 'image/jpeg',
+      data: Buffer.from('fake').toString('base64'),
+      filename: 'test.jpg',
+    }),
+  }),
   searchMessages: jest.fn().mockResolvedValue([]),
   createGroup: jest
     .fn()
-    .mockResolvedValue({ gid: { _serialized: "mock-group@g.us" } }),
+    .mockResolvedValue({ gid: { _serialized: 'mock-group@g.us' } }),
   acceptInvite: jest.fn().mockResolvedValue(undefined),
   getInviteInfo: jest.fn().mockResolvedValue({}),
-  requestPairingCode: jest.fn().mockResolvedValue("123-456"),
-  info: { wid: { user: "628123456789" } },
+  requestPairingCode: jest.fn().mockResolvedValue('123-456'),
+  getContacts: jest.fn().mockResolvedValue([]),
+  getContactById: jest.fn().mockResolvedValue({
+    id: { _serialized: '628123@s.whatsapp.net' },
+    block: jest.fn().mockResolvedValue(undefined),
+    unblock: jest.fn().mockResolvedValue(undefined),
+  }),
+  getProfilePicUrl: jest.fn().mockResolvedValue('https://example.com/pic.jpg'),
+  setStatus: jest.fn().mockResolvedValue(undefined),
+  setDisplayName: jest.fn().mockResolvedValue(undefined),
+  setProfilePicture: jest.fn().mockResolvedValue(undefined),
+  deleteProfilePicture: jest.fn().mockResolvedValue(undefined),
+  getBlockedContacts: jest.fn().mockResolvedValue([]),
+  getLabels: jest.fn().mockResolvedValue([]),
+  getLabelById: jest.fn().mockResolvedValue({ id: 'label-1', name: 'VIP' }),
+  addOrRemoveLabels: jest.fn().mockResolvedValue(undefined),
+  getChatsByLabel: jest.fn().mockResolvedValue([]),
+  info: {
+    wid: { user: '628123456789' },
+    pushname: 'Test Bot',
+    platform: 'android',
+  },
   on: jest.fn(),
 };
 
@@ -11118,13 +13040,13 @@ export const mockSessionManagerService = {
   getClient: jest.fn().mockReturnValue(mockWhatsappClient),
   sendMessage: jest
     .fn()
-    .mockResolvedValue({ id: { _serialized: "mock-msg-id" } }),
+    .mockResolvedValue({ id: { _serialized: 'mock-msg-id' } }),
   sendMedia: jest
     .fn()
-    .mockResolvedValue({ id: { _serialized: "mock-msg-id" } }),
-  getHealthySession: jest.fn().mockResolvedValue("mock-session-id"),
+    .mockResolvedValue({ id: { _serialized: 'mock-msg-id' } }),
+  getHealthySession: jest.fn().mockResolvedValue('mock-session-id'),
   initClient: jest.fn().mockResolvedValue(undefined),
-  getConnectedSessions: jest.fn().mockReturnValue(["mock-session-id"]),
+  getConnectedSessions: jest.fn().mockReturnValue(['mock-session-id']),
 };
 
 ```
@@ -11133,25 +13055,29 @@ export const mockSessionManagerService = {
 ## File : `test/unit/auth/auth.service.spec.ts`
 
 ```ts
-import { Test, TestingModule } from "@nestjs/testing";
-import { JwtService } from "@nestjs/jwt";
-import { ConfigService } from "@nestjs/config";
-import { ForbiddenException, UnauthorizedException } from "@nestjs/common";
-import { AuthService } from "../../../src/modules/auth/auth.service";
-import { mockPrismaService } from "../../mocks/prisma.mock";
-import { mockRedisService } from "../../mocks/redis.mock";
-import { PrismaService } from "../../../src/prisma/prisma.service";
-import { RedisService } from "../../../src/redis/redis.service";
-import { AuditService } from "../../../src/modules/audit/audit.service";
+import { Test, TestingModule } from '@nestjs/testing';
+import { JwtService } from '@nestjs/jwt';
+import { ConfigService } from '@nestjs/config';
+import {
+  ForbiddenException,
+  UnauthorizedException,
+  BadRequestException,
+} from '@nestjs/common';
+import { AuthService } from '../../../src/modules/auth/auth.service';
+import { mockPrismaService } from '../../mocks/prisma.mock';
+import { mockRedisService } from '../../mocks/redis.mock';
+import { PrismaService } from '../../../src/prisma/prisma.service';
+import { RedisService } from '../../../src/redis/redis.service';
+import { AuditService } from '../../../src/modules/audit/audit.service';
 
 const mockJwtService = {
-  sign: jest.fn().mockReturnValue("mock.jwt.token"),
+  sign: jest.fn().mockReturnValue('mock.jwt.token'),
   verify: jest.fn(),
 };
-const mockConfigService = { get: jest.fn().mockReturnValue("test@test.com") };
+const mockConfigService = { get: jest.fn().mockReturnValue('admin@test.com') };
 const mockAuditService = { log: jest.fn().mockResolvedValue(undefined) };
 
-describe("AuthService", () => {
+describe('AuthService', () => {
   let service: AuthService;
 
   beforeEach(async () => {
@@ -11169,118 +13095,160 @@ describe("AuthService", () => {
     jest.clearAllMocks();
   });
 
-  describe("validateGoogleUser", () => {
+  describe('validateGoogleUser', () => {
     const profile = {
-      email: "user@test.com",
-      name: "Test User",
-      picture: "https://pic.com",
+      email: 'user@test.com',
+      name: 'Test User',
+      picture: 'https://pic.com',
     };
 
-    it("creates new user on first login", async () => {
+    it('creates new user on first login', async () => {
       mockPrismaService.user.findUnique.mockResolvedValue(null);
       mockPrismaService.user.create.mockResolvedValue({
-        id: "u1",
+        id: 'u1',
         ...profile,
-        role: "user",
+        role: 'user',
         isActive: true,
         twoFaEnabled: false,
       });
       mockPrismaService.userQuota.create.mockResolvedValue({});
-
       const result = await service.validateGoogleUser(
         profile,
-        "127.0.0.1",
-        "jest",
+        '127.0.0.1',
+        'jest',
       );
       expect(mockPrismaService.user.create).toHaveBeenCalled();
       expect(result.email).toBe(profile.email);
     });
 
-    it("returns existing user on subsequent login", async () => {
+    it('returns existing user on subsequent login', async () => {
       const existing = {
-        id: "u1",
+        id: 'u1',
         ...profile,
-        role: "user",
+        role: 'user',
         isActive: true,
         twoFaEnabled: false,
       };
       mockPrismaService.user.findUnique.mockResolvedValue(existing);
-
       const result = await service.validateGoogleUser(
         profile,
-        "127.0.0.1",
-        "jest",
+        '127.0.0.1',
+        'jest',
       );
       expect(mockPrismaService.user.create).not.toHaveBeenCalled();
-      expect(result.id).toBe("u1");
+      expect(result.id).toBe('u1');
     });
 
-    it("throws ForbiddenException for inactive user", async () => {
+    it('throws ForbiddenException for inactive user', async () => {
       mockPrismaService.user.findUnique.mockResolvedValue({
-        id: "u1",
+        id: 'u1',
         ...profile,
-        role: "user",
+        role: 'user',
         isActive: false,
         twoFaEnabled: false,
       });
       await expect(
-        service.validateGoogleUser(profile, "127.0.0.1", "jest"),
+        service.validateGoogleUser(profile, '127.0.0.1', 'jest'),
       ).rejects.toThrow(ForbiddenException);
     });
 
-    it("assigns admin role if email matches ADMIN_EMAIL", async () => {
+    it('assigns admin role if email matches ADMIN_EMAIL', async () => {
       mockPrismaService.user.findUnique.mockResolvedValue(null);
       mockPrismaService.user.create.mockResolvedValue({
-        id: "u-admin",
-        email: "test@test.com",
-        name: "Admin",
-        role: "admin",
+        id: 'u-admin',
+        email: 'admin@test.com',
+        name: 'Admin',
+        role: 'admin',
         isActive: true,
         twoFaEnabled: false,
       });
       mockPrismaService.userQuota.create.mockResolvedValue({});
-
       const result = await service.validateGoogleUser(
-        { ...profile, email: "test@test.com" },
-        "127.0.0.1",
-        "jest",
+        { ...profile, email: 'admin@test.com' },
+        '127.0.0.1',
+        'jest',
       );
-      expect(result.role).toBe("admin");
+      expect(result.role).toBe('admin');
     });
   });
 
-  describe("signJwt", () => {
-    it("returns signed token", () => {
+  describe('signJwt', () => {
+    it('returns signed token', () => {
       const token = service.signJwt({
-        id: "u1",
-        email: "a@b.com",
-        role: "user",
+        id: 'u1',
+        email: 'a@b.com',
+        role: 'user',
       });
       expect(mockJwtService.sign).toHaveBeenCalledWith({
-        sub: "u1",
-        email: "a@b.com",
-        role: "user",
+        sub: 'u1',
+        email: 'a@b.com',
+        role: 'user',
       });
-      expect(token).toBe("mock.jwt.token");
+      expect(token).toBe('mock.jwt.token');
     });
   });
 
-  describe("createTempToken & verifyTempToken", () => {
-    it("stores and retrieves temp token", async () => {
+  describe('createTempToken & verifyTempToken', () => {
+    it('stores and retrieves temp token', async () => {
       mockRedisService.set.mockResolvedValue(undefined);
-      const token = await service.createTempToken("u1");
+      const token = await service.createTempToken('u1');
       expect(mockRedisService.set).toHaveBeenCalled();
-      expect(typeof token).toBe("string");
-
-      mockRedisService.get.mockResolvedValue("u1");
+      expect(typeof token).toBe('string');
+      mockRedisService.get.mockResolvedValue('u1');
       const userId = await service.verifyTempToken(token);
-      expect(userId).toBe("u1");
+      expect(userId).toBe('u1');
     });
 
-    it("throws UnauthorizedException if temp token expired", async () => {
+    it('throws UnauthorizedException if temp token expired', async () => {
       mockRedisService.get.mockResolvedValue(null);
-      await expect(service.verifyTempToken("invalid")).rejects.toThrow(
+      await expect(service.verifyTempToken('invalid')).rejects.toThrow(
         UnauthorizedException,
+      );
+    });
+  });
+
+  describe('setup2fa', () => {
+    it('returns qrCode and secret', async () => {
+      mockPrismaService.user.findUnique.mockResolvedValue({
+        id: 'u1',
+        email: 'a@b.com',
+        twoFaEnabled: false,
+      });
+      mockRedisService.set.mockResolvedValue(undefined);
+      const result = await service.setup2fa('u1');
+      expect(result).toHaveProperty('qrCode');
+      expect(result).toHaveProperty('secret');
+    });
+
+    it('throws if 2FA already enabled', async () => {
+      mockPrismaService.user.findUnique.mockResolvedValue({
+        id: 'u1',
+        email: 'a@b.com',
+        twoFaEnabled: true,
+      });
+      await expect(service.setup2fa('u1')).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  describe('regenerateBackupCodes', () => {
+    it('throws if 2FA not enabled', async () => {
+      mockPrismaService.user.findUnique.mockResolvedValue({
+        id: 'u1',
+        email: 'a@b.com',
+        twoFaEnabled: false,
+        twoFaSecret: null,
+      });
+      await expect(
+        service.regenerateBackupCodes('u1', '123456'),
+      ).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  describe('logout', () => {
+    it('logs audit on logout', async () => {
+      await service.logout('u1', 'a@b.com', '127.0.0.1', 'jest');
+      expect(mockAuditService.log).toHaveBeenCalledWith(
+        expect.objectContaining({ action: 'LOGOUT' }),
       );
     });
   });
@@ -11411,126 +13379,725 @@ describe("AutoReplyEngine", () => {
 ## File : `test/unit/broadcast/broadcast.service.spec.ts`
 
 ```ts
-import { Test, TestingModule } from "@nestjs/testing";
-import { BadRequestException } from "@nestjs/common";
-import { getQueueToken } from "@nestjs/bullmq";
-import { BroadcastService } from "../../../src/modules/broadcast/broadcast.service";
-import { mockPrismaService } from "../../mocks/prisma.mock";
-import { PrismaService } from "../../../src/prisma/prisma.service";
-import { QueueNames } from "../../../src/common/constants/queue-names.constant";
+import { Test, TestingModule } from '@nestjs/testing';
+import { BroadcastProcessor } from '../../../src/modules/broadcast/processors/broadcast.processor';
+import { mockPrismaService } from '../../mocks/prisma.mock';
+import { mockSessionManagerService } from '../../mocks/whatsapp.mock';
+import { PrismaService } from '../../../src/prisma/prisma.service';
+import { SessionManagerService } from '../../../src/modules/sessions/session-manager.service';
+import { GatewayService } from '../../../src/gateway/gateway.service';
 
-const mockBroadcastQueue = {
-  add: jest.fn().mockResolvedValue({ id: "job-1" }),
-  getJobs: jest.fn().mockResolvedValue([]),
+jest.mock('../../../src/common/utils/mime-validator.util', () => ({
+  validateMimeType: jest.fn().mockResolvedValue('image/jpeg'),
+}));
+
+const mockGatewayService = {
+  emitBroadcastProgress: jest.fn(),
+  emitBroadcastComplete: jest.fn(),
 };
 
-describe("BroadcastService", () => {
-  let service: BroadcastService;
+describe('BroadcastProcessor', () => {
+  let processor: BroadcastProcessor;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
-        BroadcastService,
+        BroadcastProcessor,
         { provide: PrismaService, useValue: mockPrismaService },
-        {
-          provide: getQueueToken(QueueNames.BROADCAST),
-          useValue: mockBroadcastQueue,
-        },
+        { provide: SessionManagerService, useValue: mockSessionManagerService },
+        { provide: GatewayService, useValue: mockGatewayService },
       ],
     }).compile();
-    service = module.get<BroadcastService>(BroadcastService);
+    processor = module.get<BroadcastProcessor>(BroadcastProcessor);
     jest.clearAllMocks();
   });
 
-  describe("create", () => {
-    it("creates campaign and enqueues job", async () => {
-      mockPrismaService.whatsappSession.findMany.mockResolvedValue([
-        { id: "s1", status: "connected" },
-      ]);
-      mockPrismaService.campaign.create.mockResolvedValue({
-        id: "c1",
-        name: "Test",
-        status: "pending",
-      });
+  const makeJob = (overrides = {}) =>
+    ({
+      data: {
+        campaignId: 'c1',
+        userId: 'u1',
+        recipients: ['6281234567890'],
+        message: 'Hello',
+        mediaPath: null,
+        sessions: ['s1'],
+        ...overrides,
+      },
+    }) as any;
 
-      const result = await service.create("u1", {
-        name: "Test",
-        message: "Hello",
-        recipients: ["08123456789"],
+  it('processes broadcast and marks campaign completed', async () => {
+    mockPrismaService.campaign.update.mockResolvedValue({});
+    mockPrismaService.messageLog.create.mockResolvedValue({});
+    mockPrismaService.userQuota.updateMany.mockResolvedValue({});
+    mockSessionManagerService.sendMessage.mockResolvedValue({
+      id: { _serialized: 'msg-1' },
+    });
+
+    await processor.process(makeJob());
+
+    expect(mockPrismaService.campaign.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: 'completed' }),
+      }),
+    );
+    expect(mockGatewayService.emitBroadcastComplete).toHaveBeenCalledWith(
+      'u1',
+      'c1',
+      1,
+      0,
+    );
+  });
+
+  it('falls over to next session if first session fails', async () => {
+    mockPrismaService.campaign.update.mockResolvedValue({});
+    mockPrismaService.messageLog.create.mockResolvedValue({});
+    mockPrismaService.userQuota.updateMany.mockResolvedValue({});
+
+    mockSessionManagerService.sendMessage
+      .mockRejectedValueOnce(new Error('Session s1 failed'))
+      .mockResolvedValueOnce({ id: { _serialized: 'msg-1' } });
+
+    await processor.process(makeJob({ sessions: ['s1', 's2'] }));
+
+    expect(mockSessionManagerService.sendMessage).toHaveBeenCalledTimes(2);
+    expect(mockGatewayService.emitBroadcastComplete).toHaveBeenCalledWith(
+      'u1',
+      'c1',
+      1,
+      0,
+    );
+  });
+
+  it('marks recipient as failed when all sessions fail', async () => {
+    mockPrismaService.campaign.update.mockResolvedValue({});
+    mockPrismaService.messageLog.create.mockResolvedValue({});
+    mockPrismaService.userQuota.updateMany.mockResolvedValue({});
+    mockSessionManagerService.sendMessage.mockRejectedValue(
+      new Error('All failed'),
+    );
+
+    await processor.process(makeJob({ sessions: ['s1'] }));
+
+    expect(mockGatewayService.emitBroadcastComplete).toHaveBeenCalledWith(
+      'u1',
+      'c1',
+      0,
+      1,
+    );
+    expect(mockPrismaService.messageLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: 'failed',
+          errorMessage: 'All sessions failed',
+        }),
+      }),
+    );
+  });
+
+  it('emits progress for each recipient', async () => {
+    mockPrismaService.campaign.update.mockResolvedValue({});
+    mockPrismaService.messageLog.create.mockResolvedValue({});
+    mockPrismaService.userQuota.updateMany.mockResolvedValue({});
+    mockSessionManagerService.sendMessage.mockResolvedValue({
+      id: { _serialized: 'msg-1' },
+    });
+
+    await processor.process(makeJob({ recipients: ['628111', '628222'] }));
+
+    expect(mockGatewayService.emitBroadcastProgress).toHaveBeenCalledTimes(2);
+    expect(mockGatewayService.emitBroadcastProgress).toHaveBeenCalledWith(
+      'u1',
+      expect.objectContaining({ current: 1, total: 2, percentage: 50 }),
+    );
+  });
+});
+
+```
+---
+
+## File : `test/unit/broadcast-list/broadcast-list.service.spec.ts`
+
+```ts
+import { Test, TestingModule } from '@nestjs/testing';
+import { BadRequestException } from '@nestjs/common';
+import { BroadcastListService } from '../../../src/modules/broadcast-list/broadcast-list.service';
+import {
+  mockSessionManagerService,
+  mockWhatsappClient,
+} from '../../mocks/whatsapp.mock';
+import { SessionManagerService } from '../../../src/modules/sessions/session-manager.service';
+
+describe('BroadcastListService', () => {
+  let service: BroadcastListService;
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        BroadcastListService,
+        { provide: SessionManagerService, useValue: mockSessionManagerService },
+      ],
+    }).compile();
+    service = module.get<BroadcastListService>(BroadcastListService);
+    jest.clearAllMocks();
+  });
+
+  describe('getAll', () => {
+    it('returns only broadcast list chats', async () => {
+      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
+      mockWhatsappClient.getChats.mockResolvedValue([
+        {
+          isBroadcast: true,
+          id: { server: 'broadcast', _serialized: 'bl1@broadcast' },
+        },
+        {
+          isBroadcast: false,
+          id: { server: 'g.us', _serialized: 'group@g.us' },
+        },
+        {
+          isBroadcast: true,
+          id: { server: 'broadcast', _serialized: 'bl2@broadcast' },
+        },
+      ]);
+      const result = await service.getAll('s1');
+      expect(result).toHaveLength(2);
+    });
+
+    it('throws if session not connected', async () => {
+      mockSessionManagerService.getClient.mockReturnValue(null);
+      await expect(service.getAll('s1')).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  describe('send', () => {
+    it('sends message to broadcast list', async () => {
+      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
+      mockSessionManagerService.sendMessage.mockResolvedValue({
+        id: { _serialized: 'msg-1' },
       });
-      expect(result.id).toBe("c1");
-      expect(mockBroadcastQueue.add).toHaveBeenCalledWith(
-        "send",
-        expect.objectContaining({ campaignId: "c1" }),
+      await service.send('s1', 'bl1@broadcast', 'Hello everyone');
+      expect(mockSessionManagerService.sendMessage).toHaveBeenCalledWith(
+        's1',
+        'bl1@broadcast',
+        'Hello everyone',
       );
     });
+  });
+});
 
-    it("throws NO_SESSIONS when no connected sessions", async () => {
-      mockPrismaService.whatsappSession.findMany.mockResolvedValue([]);
-      await expect(
-        service.create("u1", {
-          name: "T",
-          message: "H",
-          recipients: ["08123456789"],
-        }),
-      ).rejects.toThrow(BadRequestException);
+```
+---
+
+## File : `test/unit/contacts/contacts.service.spec.ts`
+
+```ts
+import { Test, TestingModule } from '@nestjs/testing';
+import {
+  ConflictException,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
+import { ContactsService } from '../../../src/modules/contacts/contacts.service';
+import { mockPrismaService } from '../../mocks/prisma.mock';
+import { PrismaService } from '../../../src/prisma/prisma.service';
+
+jest.mock('axios');
+import axios from 'axios';
+const mockedAxios = axios as jest.Mocked<typeof axios>;
+
+describe('ContactsService', () => {
+  let service: ContactsService;
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        ContactsService,
+        { provide: PrismaService, useValue: mockPrismaService },
+      ],
+    }).compile();
+    service = module.get<ContactsService>(ContactsService);
+    jest.clearAllMocks();
+  });
+
+  describe('create', () => {
+    it('creates contact with normalized number', async () => {
+      mockPrismaService.contact.findFirst.mockResolvedValue(null);
+      mockPrismaService.contact.create.mockResolvedValue({
+        id: 'c1',
+        name: 'Budi',
+        number: '6281234567890',
+        userId: 'u1',
+      });
+      const result = await service.create('u1', {
+        name: 'Budi',
+        number: '081234567890',
+      });
+      expect(result.number).toBe('6281234567890');
     });
 
-    it("throws NO_RECIPIENTS when recipient list is empty", async () => {
-      mockPrismaService.whatsappSession.findMany.mockResolvedValue([
-        { id: "s1" },
-      ]);
+    it('throws ConflictException on duplicate number', async () => {
+      mockPrismaService.contact.findFirst.mockResolvedValue({ id: 'existing' });
       await expect(
-        service.create("u1", { name: "T", message: "H", recipients: [] }),
-      ).rejects.toThrow(BadRequestException);
+        service.create('u1', { name: 'Budi', number: '081234567890' }),
+      ).rejects.toThrow(ConflictException);
+    });
+  });
+
+  describe('update', () => {
+    it('updates contact successfully', async () => {
+      mockPrismaService.contact.findFirst.mockResolvedValue({
+        id: 'c1',
+        userId: 'u1',
+      });
+      mockPrismaService.contact.update.mockResolvedValue({
+        id: 'c1',
+        name: 'Budi Updated',
+      });
+      const result = await service.update('u1', 'c1', { name: 'Budi Updated' });
+      expect(result.name).toBe('Budi Updated');
     });
 
-    it("deduplicates recipients", async () => {
-      mockPrismaService.whatsappSession.findMany.mockResolvedValue([
-        { id: "s1" },
-      ]);
-      mockPrismaService.campaign.create.mockResolvedValue({
-        id: "c1",
-        name: "T",
-        totalRecipients: 1,
-      });
-
-      await service.create("u1", {
-        name: "T",
-        message: "H",
-        recipients: ["08123456789", "08123456789", "628123456789"],
-      });
-      expect(mockPrismaService.campaign.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ totalRecipients: 1 }),
-        }),
+    it('throws NotFoundException if not owned', async () => {
+      mockPrismaService.contact.findFirst.mockResolvedValue(null);
+      await expect(service.update('u1', 'c1', { name: 'X' })).rejects.toThrow(
+        NotFoundException,
       );
     });
   });
 
-  describe("cancel", () => {
-    it("cancels pending campaign", async () => {
-      mockPrismaService.campaign.findFirst.mockResolvedValue({
-        id: "c1",
-        status: "pending",
+  describe('remove', () => {
+    it('deletes contact', async () => {
+      mockPrismaService.contact.findFirst.mockResolvedValue({
+        id: 'c1',
+        userId: 'u1',
       });
-      mockPrismaService.campaign.update.mockResolvedValue({
-        id: "c1",
-        status: "cancelled",
+      mockPrismaService.contact.delete.mockResolvedValue({});
+      await service.remove('u1', 'c1');
+      expect(mockPrismaService.contact.delete).toHaveBeenCalledWith({
+        where: { id: 'c1' },
       });
+    });
+  });
 
-      const result = await service.cancel("u1", "c1");
-      expect(result.status).toBe("cancelled");
+  describe('bulkDelete', () => {
+    it('deletes contacts by ids', async () => {
+      mockPrismaService.contact.deleteMany.mockResolvedValue({ count: 3 });
+      const result = await service.bulkDelete('u1', {
+        ids: ['c1', 'c2', 'c3'],
+      });
+      expect(result.deleted).toBe(3);
     });
 
-    it("throws if campaign already completed", async () => {
-      mockPrismaService.campaign.findFirst.mockResolvedValue({
-        id: "c1",
-        status: "completed",
+    it('deletes all contacts when selectAll is true', async () => {
+      mockPrismaService.contact.deleteMany.mockResolvedValue({ count: 10 });
+      const result = await service.bulkDelete('u1', { selectAll: true });
+      expect(result.deleted).toBe(10);
+    });
+  });
+
+  describe('importCsv', () => {
+    it('imports valid CSV rows', async () => {
+      mockPrismaService.contact.upsert.mockResolvedValue({});
+      const csv = 'name,number,tag\nBudi,081234567890,vip\nSiti,082345678901,';
+      const result = await service.importCsv('u1', Buffer.from(csv));
+      expect(result.imported).toBe(2);
+      expect(result.skipped).toBe(0);
+    });
+
+    it('skips duplicate contacts', async () => {
+      mockPrismaService.contact.upsert.mockRejectedValue({ code: 'P2002' });
+      const csv = 'name,number,tag\nBudi,081234567890,';
+      const result = await service.importCsv('u1', Buffer.from(csv));
+      expect(result.skipped).toBe(1);
+      expect(result.imported).toBe(0);
+    });
+  });
+
+  describe('importFromGoogleContacts', () => {
+    it('imports contacts from Google API response', async () => {
+      mockedAxios.get = jest.fn().mockResolvedValue({
+        data: {
+          connections: [
+            {
+              names: [{ displayName: 'Budi' }],
+              phoneNumbers: [{ value: '081234567890' }],
+            },
+          ],
+          nextPageToken: undefined,
+        },
       });
-      await expect(service.cancel("u1", "c1")).rejects.toThrow(
+      mockPrismaService.contact.upsert.mockResolvedValue({});
+      const result = await service.importFromGoogleContacts(
+        'u1',
+        'valid-token',
+      );
+      expect(result.imported).toBe(1);
+    });
+
+    it('throws BadRequestException on invalid token', async () => {
+      mockedAxios.get = jest
+        .fn()
+        .mockRejectedValue(new Error('401 Unauthorized'));
+      await expect(
+        service.importFromGoogleContacts('u1', 'bad-token'),
+      ).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  describe('exportCsv', () => {
+    it('returns CSV string with headers', async () => {
+      mockPrismaService.contact.findMany.mockResolvedValue([
+        { name: 'Budi', number: '6281234567890', tag: 'vip' },
+      ]);
+      const csv = await service.exportCsv('u1');
+      expect(csv).toContain('name,number,tag');
+      expect(csv).toContain('Budi');
+    });
+  });
+});
+
+```
+---
+
+## File : `test/unit/customer-note/customer-note.service.spec.ts`
+
+```ts
+import { Test, TestingModule } from '@nestjs/testing';
+import { NotFoundException } from '@nestjs/common';
+import { CustomerNoteService } from '../../../src/modules/customer-note/customer-note.service';
+import { mockPrismaService } from '../../mocks/prisma.mock';
+import { PrismaService } from '../../../src/prisma/prisma.service';
+
+describe('CustomerNoteService', () => {
+  let service: CustomerNoteService;
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        CustomerNoteService,
+        { provide: PrismaService, useValue: mockPrismaService },
+      ],
+    }).compile();
+    service = module.get<CustomerNoteService>(CustomerNoteService);
+    jest.clearAllMocks();
+  });
+
+  describe('getNote', () => {
+    it('returns notes for existing contact', async () => {
+      mockPrismaService.contact.findFirst.mockResolvedValue({
+        id: 'c1',
+        userId: 'u1',
+        notes: 'VIP customer',
+      });
+      const result = await service.getNote('u1', 'c1');
+      expect(result.notes).toBe('VIP customer');
+      expect(result.contactId).toBe('c1');
+    });
+
+    it('throws NotFoundException if contact not owned', async () => {
+      mockPrismaService.contact.findFirst.mockResolvedValue(null);
+      await expect(service.getNote('u1', 'c1')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+  });
+
+  describe('upsertNote', () => {
+    it('updates note content', async () => {
+      mockPrismaService.contact.findFirst.mockResolvedValue({
+        id: 'c1',
+        userId: 'u1',
+        notes: '',
+      });
+      mockPrismaService.contact.update.mockResolvedValue({
+        id: 'c1',
+        notes: 'New note',
+      });
+      const result = await service.upsertNote('u1', 'c1', 'New note');
+      expect(result.notes).toBe('New note');
+    });
+
+    it('throws NotFoundException if contact not owned', async () => {
+      mockPrismaService.contact.findFirst.mockResolvedValue(null);
+      await expect(service.upsertNote('u1', 'c1', 'note')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+  });
+
+  describe('deleteNote', () => {
+    it('sets notes to null', async () => {
+      mockPrismaService.contact.findFirst.mockResolvedValue({
+        id: 'c1',
+        userId: 'u1',
+        notes: 'Old note',
+      });
+      mockPrismaService.contact.update.mockResolvedValue({
+        id: 'c1',
+        notes: null,
+      });
+      const result = await service.deleteNote('u1', 'c1');
+      expect(result).toHaveProperty('deleted', true);
+      expect(mockPrismaService.contact.update).toHaveBeenCalledWith({
+        where: { id: 'c1' },
+        data: { notes: null },
+      });
+    });
+
+    it('throws NotFoundException if contact not owned', async () => {
+      mockPrismaService.contact.findFirst.mockResolvedValue(null);
+      await expect(service.deleteNote('u1', 'c1')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+  });
+});
+
+```
+---
+
+## File : `test/unit/drip/drip.manager.spec.ts`
+
+```ts
+import { Test, TestingModule } from '@nestjs/testing';
+import { DripManager } from '../../../src/modules/drip/drip.manager';
+import { mockPrismaService } from '../../mocks/prisma.mock';
+import { mockSessionManagerService } from '../../mocks/whatsapp.mock';
+import { PrismaService } from '../../../src/prisma/prisma.service';
+import { SessionManagerService } from '../../../src/modules/sessions/session-manager.service';
+
+describe('DripManager', () => {
+  let manager: DripManager;
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        DripManager,
+        { provide: PrismaService, useValue: mockPrismaService },
+        { provide: SessionManagerService, useValue: mockSessionManagerService },
+      ],
+    }).compile();
+    manager = module.get<DripManager>(DripManager);
+    jest.clearAllMocks();
+  });
+
+  describe('run', () => {
+    it('runs without error when no campaigns exist', async () => {
+      mockPrismaService.dripCampaign.findMany.mockResolvedValue([]);
+      mockPrismaService.dripSubscription.findMany.mockResolvedValue([]);
+      await expect(manager.run()).resolves.not.toThrow();
+    });
+
+    it('auto-enrolls contacts with matching tag', async () => {
+      mockPrismaService.dripCampaign.findMany.mockResolvedValue([
+        { id: 'd1', userId: 'u1', triggerTag: 'vip', isActive: true },
+      ]);
+      mockPrismaService.contact.findMany.mockResolvedValue([
+        { id: 'c1', userId: 'u1', number: '628111', name: 'Budi', tag: 'vip' },
+      ]);
+      mockPrismaService.dripSubscription.upsert.mockResolvedValue({});
+      mockPrismaService.dripSubscription.findMany.mockResolvedValue([]);
+
+      await manager.run();
+
+      expect(mockPrismaService.dripSubscription.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { dripId_contactId: { dripId: 'd1', contactId: 'c1' } },
+        }),
+      );
+    });
+
+    it('sends due drip step and updates subscription', async () => {
+      mockPrismaService.dripCampaign.findMany.mockResolvedValue([]);
+
+      const now = new Date();
+      const startDate = new Date(now);
+      startDate.setDate(startDate.getDate() - 1);
+
+      const currentHour = now.getHours().toString().padStart(2, '0');
+      const currentMin = now.getMinutes().toString().padStart(2, '0');
+      const timeAt = `${currentHour}:${currentMin}`;
+
+      mockPrismaService.dripSubscription.findMany.mockResolvedValue([
+        {
+          id: 'sub1',
+          status: 'active',
+          startDate,
+          lastStepDay: 0,
+          drip: {
+            id: 'd1',
+            userId: 'u1',
+            sessionId: 's1',
+            steps: [
+              { id: 'step1', dayOffset: 1, timeAt, message: 'Hello {name}' },
+            ],
+          },
+          contact: { id: 'c1', number: '628111', name: 'Budi' },
+        },
+      ]);
+      mockPrismaService.dripSubscription.update.mockResolvedValue({});
+      mockSessionManagerService.sendMessage.mockResolvedValue({});
+
+      await manager.run();
+
+      expect(mockSessionManagerService.sendMessage).toHaveBeenCalledWith(
+        's1',
+        expect.stringContaining('@s.whatsapp.net'),
+        'Hello Budi',
+      );
+      expect(mockPrismaService.dripSubscription.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            lastStepDay: 1,
+            status: 'completed',
+          }),
+        }),
+      );
+    });
+  });
+});
+
+```
+---
+
+## File : `test/unit/groups/groups.service.spec.ts`
+
+```ts
+import { Test, TestingModule } from '@nestjs/testing';
+import { BadRequestException } from '@nestjs/common';
+import { GroupsService } from '../../../src/modules/groups/groups.service';
+import {
+  mockSessionManagerService,
+  mockWhatsappClient,
+} from '../../mocks/whatsapp.mock';
+import { SessionManagerService } from '../../../src/modules/sessions/session-manager.service';
+import { MembershipRequestAction } from '../../../src/modules/groups/dto/membership-request.dto';
+
+describe('GroupsService', () => {
+  let service: GroupsService;
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        GroupsService,
+        { provide: SessionManagerService, useValue: mockSessionManagerService },
+      ],
+    }).compile();
+    service = module.get<GroupsService>(GroupsService);
+    jest.clearAllMocks();
+  });
+
+  describe('create', () => {
+    it('creates group successfully', async () => {
+      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
+      const result = await service.create('s1', 'Test Group', [
+        '628111@s.whatsapp.net',
+      ]);
+      expect(mockWhatsappClient.createGroup).toHaveBeenCalledWith(
+        'Test Group',
+        ['628111@s.whatsapp.net'],
+      );
+      expect(result).toHaveProperty('gid');
+    });
+
+    it('throws if session not connected', async () => {
+      mockSessionManagerService.getClient.mockReturnValue(null);
+      await expect(service.create('s1', 'Test', ['628111'])).rejects.toThrow(
         BadRequestException,
       );
+    });
+  });
+
+  describe('addParticipants', () => {
+    it('adds participants to group', async () => {
+      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
+      await service.addParticipants('s1', 'group@g.us', [
+        '628111@s.whatsapp.net',
+      ]);
+      const group = await mockWhatsappClient.getChatById('group@g.us');
+      expect(group.addParticipants).toHaveBeenCalledWith([
+        '628111@s.whatsapp.net',
+      ]);
+    });
+  });
+
+  describe('removeParticipants', () => {
+    it('removes participants from group', async () => {
+      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
+      await service.removeParticipants('s1', 'group@g.us', [
+        '628111@s.whatsapp.net',
+      ]);
+      const group = await mockWhatsappClient.getChatById('group@g.us');
+      expect(group.removeParticipants).toHaveBeenCalledWith([
+        '628111@s.whatsapp.net',
+      ]);
+    });
+  });
+
+  describe('promoteParticipants', () => {
+    it('promotes participants to admin', async () => {
+      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
+      await service.promoteParticipants('s1', 'group@g.us', [
+        '628111@s.whatsapp.net',
+      ]);
+      const group = await mockWhatsappClient.getChatById('group@g.us');
+      expect(group.promoteParticipants).toHaveBeenCalledWith([
+        '628111@s.whatsapp.net',
+      ]);
+    });
+  });
+
+  describe('demoteParticipants', () => {
+    it('demotes admins to members', async () => {
+      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
+      await service.demoteParticipants('s1', 'group@g.us', [
+        '628111@s.whatsapp.net',
+      ]);
+      const group = await mockWhatsappClient.getChatById('group@g.us');
+      expect(group.demoteParticipants).toHaveBeenCalledWith([
+        '628111@s.whatsapp.net',
+      ]);
+    });
+  });
+
+  describe('getInviteCode', () => {
+    it('returns invite link', async () => {
+      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
+      const result = await service.getInviteCode('s1', 'group@g.us');
+      expect(result.inviteLink).toBe('https://chat.whatsapp.com/abc123');
+    });
+  });
+
+  describe('handleMembershipRequest', () => {
+    it('approves join request', async () => {
+      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
+      await service.handleMembershipRequest('s1', 'group@g.us', {
+        requesterJid: '628111@s.whatsapp.net',
+        action: MembershipRequestAction.APPROVE,
+      });
+      const group = await mockWhatsappClient.getChatById('group@g.us');
+      expect(group.approveGroupMembershipRequests).toHaveBeenCalledWith([
+        '628111@s.whatsapp.net',
+      ]);
+    });
+
+    it('rejects join request', async () => {
+      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
+      await service.handleMembershipRequest('s1', 'group@g.us', {
+        requesterJid: '628111@s.whatsapp.net',
+        action: MembershipRequestAction.REJECT,
+      });
+      const group = await mockWhatsappClient.getChatById('group@g.us');
+      expect(group.rejectGroupMembershipRequests).toHaveBeenCalledWith([
+        '628111@s.whatsapp.net',
+      ]);
+    });
+  });
+
+  describe('getMembershipRequests', () => {
+    it('returns pending join requests', async () => {
+      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
+      const result = await service.getMembershipRequests('s1', 'group@g.us');
+      expect(Array.isArray(result)).toBe(true);
     });
   });
 });
@@ -11541,20 +14108,24 @@ describe("BroadcastService", () => {
 ## File : `test/unit/messages/messages.service.spec.ts`
 
 ```ts
-import { Test, TestingModule } from "@nestjs/testing";
-import { BadRequestException } from "@nestjs/common";
-import { MessagesService } from "../../../src/modules/messages/messages.service";
-import { mockPrismaService } from "../../mocks/prisma.mock";
-import { mockRedisService } from "../../mocks/redis.mock";
+import { Test, TestingModule } from '@nestjs/testing';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { MessagesService } from '../../../src/modules/messages/messages.service';
+import { mockPrismaService } from '../../mocks/prisma.mock';
+import { mockRedisService } from '../../mocks/redis.mock';
 import {
   mockSessionManagerService,
   mockWhatsappClient,
-} from "../../mocks/whatsapp.mock";
-import { PrismaService } from "../../../src/prisma/prisma.service";
-import { RedisService } from "../../../src/redis/redis.service";
-import { SessionManagerService } from "../../../src/modules/sessions/session-manager.service";
+} from '../../mocks/whatsapp.mock';
+import { PrismaService } from '../../../src/prisma/prisma.service';
+import { RedisService } from '../../../src/redis/redis.service';
+import { SessionManagerService } from '../../../src/modules/sessions/session-manager.service';
 
-describe("MessagesService", () => {
+jest.mock('../../../src/common/utils/mime-validator.util', () => ({
+  validateMimeType: jest.fn().mockResolvedValue('image/jpeg'),
+}));
+
+describe('MessagesService', () => {
   let service: MessagesService;
 
   beforeEach(async () => {
@@ -11570,60 +14141,702 @@ describe("MessagesService", () => {
     jest.clearAllMocks();
   });
 
-  describe("send", () => {
-    it("sends message using auto session", async () => {
-      mockPrismaService.whatsappSession.findMany.mockResolvedValue([
-        { id: "s1" },
-      ]);
-      mockRedisService.get.mockResolvedValue(0);
-      mockRedisService.set.mockResolvedValue(undefined);
-      mockSessionManagerService.getHealthySession.mockResolvedValue("s1");
+  describe('send', () => {
+    it('sends message using auto session', async () => {
+      mockSessionManagerService.getHealthySession.mockResolvedValue('s1');
       mockSessionManagerService.sendMessage.mockResolvedValue({
-        id: { _serialized: "msg-1" },
+        id: { _serialized: 'msg-1' },
       });
       mockPrismaService.messageLog.create.mockResolvedValue({});
       mockPrismaService.userQuota.updateMany.mockResolvedValue({});
-
-      const result = await service.send("u1", {
-        to: "08123456789",
-        message: "Hello",
-        sessionId: "auto",
+      const result = await service.send('u1', {
+        to: '08123456789',
+        message: 'Hello',
+        sessionId: 'auto',
       });
-      expect(result.messageId).toBe("msg-1");
+      expect(result.messageId).toBe('msg-1');
     });
 
-    it("logs failed message on send error", async () => {
-      mockSessionManagerService.getHealthySession.mockResolvedValue("s1");
+    it('logs failed message on send error', async () => {
+      mockSessionManagerService.getHealthySession.mockResolvedValue('s1');
       mockSessionManagerService.sendMessage.mockRejectedValue(
-        new Error("Network error"),
+        new Error('Network error'),
       );
       mockPrismaService.messageLog.create.mockResolvedValue({});
-
       await expect(
-        service.send("u1", {
-          to: "08123456789",
-          message: "Hello",
-          sessionId: "auto",
+        service.send('u1', {
+          to: '08123456789',
+          message: 'Hello',
+          sessionId: 'auto',
         }),
       ).rejects.toThrow(BadRequestException);
+      expect(mockPrismaService.messageLog.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ status: 'failed' }),
+        }),
+      );
     });
 
-    it("throws NO_SESSIONS when no healthy session", async () => {
+    it('throws NO_SESSIONS when no healthy session', async () => {
       mockSessionManagerService.getHealthySession.mockResolvedValue(null);
       await expect(
-        service.send("u1", { to: "08123456789", message: "Hello" }),
+        service.send('u1', { to: '08123456789', message: 'Hello' }),
       ).rejects.toThrow(BadRequestException);
     });
   });
 
-  describe("isRegisteredUser", () => {
-    it("checks registered number", async () => {
+  describe('editMessage', () => {
+    it('edits message successfully', async () => {
+      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
+      const result = await service.editMessage(
+        'u1',
+        's1',
+        'mock-msg-id',
+        'Updated text',
+      );
+      expect(mockWhatsappClient.getMessageById).toHaveBeenCalledWith(
+        'mock-msg-id',
+      );
+      expect(result).toHaveProperty('edited', true);
+    });
+
+    it('throws SESSION_NOT_CONNECTED if client not found', async () => {
+      mockSessionManagerService.getClient.mockReturnValue(null);
+      await expect(
+        service.editMessage('u1', 's1', 'mock-msg-id', 'text'),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('throws NOT_FOUND if message not found', async () => {
+      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
+      mockWhatsappClient.getMessageById.mockResolvedValueOnce(null);
+      await expect(
+        service.editMessage('u1', 's1', 'unknown-id', 'text'),
+      ).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('forwardMessage', () => {
+    it('forwards message to another number', async () => {
+      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
+      const result = await service.forwardMessage(
+        'u1',
+        's1',
+        'mock-msg-id',
+        '08123456789',
+      );
+      expect(mockWhatsappClient.getMessageById).toHaveBeenCalledWith(
+        'mock-msg-id',
+      );
+      expect(result).toHaveProperty('forwarded', true);
+    });
+  });
+
+  describe('pinMessage', () => {
+    it('pins message successfully', async () => {
+      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
+      const result = await service.pinMessage('u1', 's1', 'mock-msg-id', 3600);
+      expect(result).toHaveProperty('pinned', true);
+    });
+
+    it('unpins message successfully', async () => {
+      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
+      const result = await service.unpinMessage('u1', 's1', 'mock-msg-id');
+      expect(result).toHaveProperty('unpinned', true);
+    });
+  });
+
+  describe('downloadMedia', () => {
+    it('downloads and saves media file', async () => {
+      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
+      const result = await service.downloadMedia(
+        'u1',
+        's1',
+        'mock-msg-id',
+        '/tmp',
+      );
+      expect(result).toHaveProperty('mimetype', 'image/jpeg');
+      expect(result).toHaveProperty('filename');
+    });
+
+    it('throws if message has no media', async () => {
+      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
+      mockWhatsappClient.getMessageById.mockResolvedValueOnce({
+        id: { _serialized: 'id' },
+        hasMedia: false,
+        delete: jest.fn(),
+        react: jest.fn(),
+      });
+      await expect(
+        service.downloadMedia('u1', 's1', 'mock-msg-id', '/tmp'),
+      ).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  describe('reactMessage', () => {
+    it('reacts to message with emoji', async () => {
+      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
+      const result = await service.reactMessage('u1', 's1', 'mock-msg-id', '');
+      expect(result).toHaveProperty('reacted', true);
+    });
+  });
+
+  describe('deleteMessage', () => {
+    it('deletes message for everyone by default', async () => {
+      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
+      const result = await service.deleteMessage('u1', 's1', 'mock-msg-id');
+      expect(mockWhatsappClient.getMessageById).toHaveBeenCalledWith(
+        'mock-msg-id',
+      );
+      expect(result).toHaveProperty('deleted', true);
+    });
+  });
+
+  describe('isRegisteredUser', () => {
+    it('checks registered number', async () => {
       mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
       mockWhatsappClient.isRegisteredUser.mockResolvedValue(true);
-
-      const result = await service.isRegisteredUser("u1", "s1", "08123456789");
+      const result = await service.isRegisteredUser('u1', 's1', '08123456789');
       expect(result.isRegistered).toBe(true);
-      expect(result.phone).toBe("628123456789");
+      expect(result.phone).toBe('6281234567890');
+    });
+  });
+
+  describe('getLogs', () => {
+    it('returns paginated message logs', async () => {
+      mockPrismaService.messageLog.findMany.mockResolvedValue([
+        { id: 1, target: '628123' },
+      ]);
+      mockPrismaService.messageLog.count.mockResolvedValue(1);
+      const result = await service.getLogs('u1', { page: 1, limit: 10 } as any);
+      expect(result.total).toBe(1);
+      expect(result.data).toHaveLength(1);
+    });
+  });
+});
+
+```
+---
+
+## File : `test/unit/middlewares/maintenance.middleware.spec.ts`
+
+```ts
+import { Test, TestingModule } from '@nestjs/testing';
+import { ServiceUnavailableException } from '@nestjs/common';
+import { MaintenanceMiddleware } from '../../../src/common/middlewares/maintenance.middleware';
+import { mockPrismaService } from '../../mocks/prisma.mock';
+import { PrismaService } from '../../../src/prisma/prisma.service';
+
+describe('MaintenanceMiddleware', () => {
+  let middleware: MaintenanceMiddleware;
+  let next: jest.Mock;
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        MaintenanceMiddleware,
+        { provide: PrismaService, useValue: mockPrismaService },
+      ],
+    }).compile();
+    middleware = module.get<MaintenanceMiddleware>(MaintenanceMiddleware);
+    next = jest.fn();
+    jest.clearAllMocks();
+  });
+
+  it('calls next when maintenance mode is off', async () => {
+    mockPrismaService.globalSetting.findUnique.mockResolvedValue({
+      key: 'maintenanceMode',
+      value: 'false',
+    });
+    await middleware.use({} as any, {} as any, next);
+    expect(next).toHaveBeenCalled();
+  });
+
+  it('calls next when no maintenance setting exists', async () => {
+    mockPrismaService.globalSetting.findUnique.mockResolvedValue(null);
+    await middleware.use({} as any, {} as any, next);
+    expect(next).toHaveBeenCalled();
+  });
+
+  it('throws ServiceUnavailableException for regular users when maintenance is on', async () => {
+    mockPrismaService.globalSetting.findUnique.mockResolvedValue({
+      key: 'maintenanceMode',
+      value: 'true',
+    });
+    const req = { user: { role: 'user' } } as any;
+    await expect(middleware.use(req, {} as any, next)).rejects.toThrow(
+      ServiceUnavailableException,
+    );
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('calls next for admin users even when maintenance is on', async () => {
+    mockPrismaService.globalSetting.findUnique.mockResolvedValue({
+      key: 'maintenanceMode',
+      value: 'true',
+    });
+    const req = { user: { role: 'admin' } } as any;
+    await middleware.use(req, {} as any, next);
+    expect(next).toHaveBeenCalled();
+  });
+
+  it('calls next for super_admin users even when maintenance is on', async () => {
+    mockPrismaService.globalSetting.findUnique.mockResolvedValue({
+      key: 'maintenanceMode',
+      value: 'true',
+    });
+    const req = { user: { role: 'super_admin' } } as any;
+    await middleware.use(req, {} as any, next);
+    expect(next).toHaveBeenCalled();
+  });
+
+  it('throws for unauthenticated requests when maintenance is on', async () => {
+    mockPrismaService.globalSetting.findUnique.mockResolvedValue({
+      key: 'maintenanceMode',
+      value: 'true',
+    });
+    const req = { user: undefined } as any;
+    await expect(middleware.use(req, {} as any, next)).rejects.toThrow(
+      ServiceUnavailableException,
+    );
+  });
+});
+
+```
+---
+
+## File : `test/unit/profile/profile.service.spec.ts`
+
+```ts
+import { Test, TestingModule } from '@nestjs/testing';
+import { BadRequestException } from '@nestjs/common';
+import { ProfileService } from '../../../src/modules/profile/profile.service';
+import {
+  mockSessionManagerService,
+  mockWhatsappClient,
+} from '../../mocks/whatsapp.mock';
+import { SessionManagerService } from '../../../src/modules/sessions/session-manager.service';
+
+jest.mock('../../../src/common/utils/mime-validator.util', () => ({
+  validateMimeType: jest.fn().mockResolvedValue('image/jpeg'),
+}));
+
+describe('ProfileService', () => {
+  let service: ProfileService;
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        ProfileService,
+        { provide: SessionManagerService, useValue: mockSessionManagerService },
+      ],
+    }).compile();
+    service = module.get<ProfileService>(ProfileService);
+    jest.clearAllMocks();
+  });
+
+  describe('getProfile', () => {
+    it('returns session info', async () => {
+      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
+      const result = await service.getProfile('s1');
+      expect(result).toHaveProperty('pushname', 'Test Bot');
+    });
+
+    it('throws if session not connected', async () => {
+      mockSessionManagerService.getClient.mockReturnValue(null);
+      await expect(service.getProfile('s1')).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+  });
+
+  describe('setDisplayName', () => {
+    it('sets display name', async () => {
+      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
+      const result = await service.setDisplayName('s1', 'New Name');
+      expect(result).toHaveProperty('updated', true);
+    });
+  });
+
+  describe('setStatus', () => {
+    it('sets status', async () => {
+      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
+      const result = await service.setStatus('s1', 'Available');
+      expect(result).toHaveProperty('updated', true);
+    });
+  });
+
+  describe('setProfilePhoto', () => {
+    it('uploads profile photo', async () => {
+      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
+      const file = {
+        buffer: Buffer.from('fake'),
+        originalname: 'pic.jpg',
+      } as Express.Multer.File;
+      const result = await service.setProfilePhoto('s1', file);
+      expect(result).toHaveProperty('updated', true);
+    });
+  });
+
+  describe('deleteProfilePhoto', () => {
+    it('deletes profile photo', async () => {
+      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
+      const result = await service.deleteProfilePhoto('s1');
+      expect(result).toHaveProperty('deleted', true);
+    });
+  });
+
+  describe('blockContact', () => {
+    it('blocks a contact', async () => {
+      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
+      const result = await service.blockContact('s1', '628123@s.whatsapp.net');
+      expect(result).toHaveProperty('blocked', true);
+    });
+  });
+
+  describe('unblockContact', () => {
+    it('unblocks a contact', async () => {
+      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
+      const result = await service.unblockContact(
+        's1',
+        '628123@s.whatsapp.net',
+      );
+      expect(result).toHaveProperty('unblocked', true);
+    });
+  });
+
+  describe('getBlockedContacts', () => {
+    it('returns list of blocked contacts', async () => {
+      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
+      const result = await service.getBlockedContacts('s1');
+      expect(Array.isArray(result)).toBe(true);
+    });
+  });
+
+  describe('getContactProfilePhoto', () => {
+    it('returns photo URL', async () => {
+      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
+      const result = await service.getContactProfilePhoto(
+        's1',
+        '628123@s.whatsapp.net',
+      );
+      expect(result).toHaveProperty('url');
+    });
+  });
+
+  describe('getAllContacts', () => {
+    it('returns contacts array', async () => {
+      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
+      const result = await service.getAllContacts('s1');
+      expect(Array.isArray(result)).toBe(true);
+    });
+  });
+});
+
+```
+---
+
+## File : `test/unit/scheduled-event/scheduled-event.service.spec.ts`
+
+```ts
+import { Test, TestingModule } from '@nestjs/testing';
+import { BadRequestException } from '@nestjs/common';
+import { ScheduledEventService } from '../../../src/modules/scheduled-event/scheduled-event.service';
+import { mockPrismaService } from '../../mocks/prisma.mock';
+import {
+  mockSessionManagerService,
+  mockWhatsappClient,
+} from '../../mocks/whatsapp.mock';
+import { PrismaService } from '../../../src/prisma/prisma.service';
+import { SessionManagerService } from '../../../src/modules/sessions/session-manager.service';
+import { EventResponse } from '../../../src/modules/scheduled-event/dto/respond-event.dto';
+
+describe('ScheduledEventService', () => {
+  let service: ScheduledEventService;
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        ScheduledEventService,
+        { provide: PrismaService, useValue: mockPrismaService },
+        { provide: SessionManagerService, useValue: mockSessionManagerService },
+      ],
+    }).compile();
+    service = module.get<ScheduledEventService>(ScheduledEventService);
+    jest.clearAllMocks();
+  });
+
+  describe('send', () => {
+    it('sends scheduled event message', async () => {
+      mockSessionManagerService.getHealthySession.mockResolvedValue('s1');
+      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
+      mockWhatsappClient.sendMessage.mockResolvedValue({
+        id: { _serialized: 'msg-1' },
+      });
+
+      const result = await service.send('u1', {
+        to: '08123456789',
+        title: 'Team Meeting',
+        startTime: new Date(Date.now() + 3600000).toISOString(),
+        description: 'Weekly sync',
+        sessionId: 'auto',
+      });
+
+      expect(result.messageId).toBe('msg-1');
+    });
+
+    it('throws if no session available', async () => {
+      mockSessionManagerService.getHealthySession.mockResolvedValue(null);
+      await expect(
+        service.send('u1', {
+          to: '08123456789',
+          title: 'Meeting',
+          startTime: new Date(Date.now() + 3600000).toISOString(),
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  describe('respond', () => {
+    it('accepts scheduled event', async () => {
+      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
+      const mockMsg = {
+        id: { _serialized: 'msg-1' },
+        acceptScheduledEvent: jest.fn().mockResolvedValue(undefined),
+        declineScheduledEvent: jest.fn().mockResolvedValue(undefined),
+      };
+      mockWhatsappClient.getMessageById.mockResolvedValue(mockMsg);
+
+      const result = await service.respond('u1', {
+        messageId: 'msg-1',
+        sessionId: 's1',
+        response: EventResponse.ACCEPT,
+      });
+
+      expect(result.responded).toBe(true);
+      expect(result.response).toBe(EventResponse.ACCEPT);
+      expect(mockMsg.acceptScheduledEvent).toHaveBeenCalled();
+    });
+
+    it('declines scheduled event', async () => {
+      mockSessionManagerService.getClient.mockReturnValue(mockWhatsappClient);
+      const mockMsg = {
+        id: { _serialized: 'msg-1' },
+        acceptScheduledEvent: jest.fn().mockResolvedValue(undefined),
+        declineScheduledEvent: jest.fn().mockResolvedValue(undefined),
+      };
+      mockWhatsappClient.getMessageById.mockResolvedValue(mockMsg);
+
+      const result = await service.respond('u1', {
+        messageId: 'msg-1',
+        sessionId: 's1',
+        response: EventResponse.DECLINE,
+      });
+
+      expect(mockMsg.declineScheduledEvent).toHaveBeenCalled();
+      expect(result.response).toBe(EventResponse.DECLINE);
+    });
+  });
+});
+
+```
+---
+
+## File : `test/unit/scheduler/scheduler.service.spec.ts`
+
+```ts
+import { Test, TestingModule } from '@nestjs/testing';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { SchedulerService } from '../../../src/modules/scheduler/scheduler.service';
+import { mockPrismaService } from '../../mocks/prisma.mock';
+import { mockSessionManagerService } from '../../mocks/whatsapp.mock';
+import { PrismaService } from '../../../src/prisma/prisma.service';
+import { SessionManagerService } from '../../../src/modules/sessions/session-manager.service';
+
+describe('SchedulerService', () => {
+  let service: SchedulerService;
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        SchedulerService,
+        { provide: PrismaService, useValue: mockPrismaService },
+        { provide: SessionManagerService, useValue: mockSessionManagerService },
+      ],
+    }).compile();
+    service = module.get<SchedulerService>(SchedulerService);
+    jest.clearAllMocks();
+  });
+
+  describe('create', () => {
+    it('creates scheduled message for future time', async () => {
+      const future = new Date(Date.now() + 3600 * 1000).toISOString();
+      mockPrismaService.whatsappSession.findFirst.mockResolvedValue({
+        id: 's1',
+        userId: 'u1',
+      });
+      mockPrismaService.scheduledMessage.create.mockResolvedValue({
+        id: 'sm1',
+        target: '628111',
+        scheduledTime: new Date(future),
+        status: 'pending',
+      });
+      const result = await service.create('u1', {
+        target: '628111',
+        message: 'Hi',
+        sessionId: 's1',
+        scheduledTime: future,
+      });
+      expect(result.status).toBe('pending');
+    });
+
+    it('throws BadRequestException for past time', async () => {
+      const past = new Date(Date.now() - 3600 * 1000).toISOString();
+      await expect(
+        service.create('u1', {
+          target: '628111',
+          message: 'Hi',
+          sessionId: 's1',
+          scheduledTime: past,
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('throws NotFoundException if session not owned', async () => {
+      const future = new Date(Date.now() + 3600 * 1000).toISOString();
+      mockPrismaService.whatsappSession.findFirst.mockResolvedValue(null);
+      await expect(
+        service.create('u1', {
+          target: '628111',
+          message: 'Hi',
+          sessionId: 's999',
+          scheduledTime: future,
+        }),
+      ).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('cancel', () => {
+    it('cancels pending message', async () => {
+      mockPrismaService.scheduledMessage.findFirst.mockResolvedValue({
+        id: 'sm1',
+        userId: 'u1',
+        status: 'pending',
+      });
+      mockPrismaService.scheduledMessage.update.mockResolvedValue({
+        id: 'sm1',
+        status: 'cancelled',
+      });
+      const result = await service.cancel('u1', 'sm1');
+      expect(result.status).toBe('cancelled');
+    });
+
+    it('throws if message already sent', async () => {
+      mockPrismaService.scheduledMessage.findFirst.mockResolvedValue({
+        id: 'sm1',
+        userId: 'u1',
+        status: 'sent',
+      });
+      await expect(service.cancel('u1', 'sm1')).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+  });
+
+  describe('processScheduled', () => {
+    it('sends due messages and marks as sent', async () => {
+      mockPrismaService.scheduledMessage.findMany.mockResolvedValue([
+        {
+          id: 'sm1',
+          userId: 'u1',
+          sessionId: 's1',
+          target: '628111',
+          message: 'Hi',
+          recurrenceType: 'none',
+          scheduledTime: new Date(),
+        },
+      ]);
+      mockPrismaService.scheduledMessage.update.mockResolvedValue({});
+      mockSessionManagerService.getClient.mockReturnValue({
+        sendMessage: jest.fn().mockResolvedValue({}),
+      });
+      mockSessionManagerService.sendMessage.mockResolvedValue({});
+
+      await service.processScheduled();
+
+      expect(mockPrismaService.scheduledMessage.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { status: 'sent' } }),
+      );
+    });
+
+    it('skips message if session not connected', async () => {
+      mockPrismaService.scheduledMessage.findMany.mockResolvedValue([
+        {
+          id: 'sm1',
+          userId: 'u1',
+          sessionId: 's1',
+          target: '628111',
+          message: 'Hi',
+          recurrenceType: 'none',
+          scheduledTime: new Date(),
+        },
+      ]);
+      mockSessionManagerService.getClient.mockReturnValue(null);
+
+      await service.processScheduled();
+
+      expect(mockPrismaService.scheduledMessage.update).not.toHaveBeenCalled();
+    });
+
+    it('creates next recurrence after sending daily message', async () => {
+      mockPrismaService.scheduledMessage.findMany.mockResolvedValue([
+        {
+          id: 'sm1',
+          userId: 'u1',
+          sessionId: 's1',
+          target: '628111',
+          message: 'Hi',
+          recurrenceType: 'daily',
+          scheduledTime: new Date(),
+        },
+      ]);
+      mockPrismaService.scheduledMessage.update.mockResolvedValue({});
+      mockPrismaService.scheduledMessage.create.mockResolvedValue({});
+      mockSessionManagerService.getClient.mockReturnValue({});
+      mockSessionManagerService.sendMessage.mockResolvedValue({});
+
+      await service.processScheduled();
+
+      expect(mockPrismaService.scheduledMessage.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ recurrenceType: 'daily' }),
+        }),
+      );
+    });
+
+    it('marks as failed if send throws', async () => {
+      mockPrismaService.scheduledMessage.findMany.mockResolvedValue([
+        {
+          id: 'sm1',
+          userId: 'u1',
+          sessionId: 's1',
+          target: '628111',
+          message: 'Hi',
+          recurrenceType: 'none',
+          scheduledTime: new Date(),
+        },
+      ]);
+      mockSessionManagerService.getClient.mockReturnValue({});
+      mockSessionManagerService.sendMessage.mockRejectedValue(
+        new Error('Send error'),
+      );
+      mockPrismaService.scheduledMessage.update.mockResolvedValue({});
+
+      await service.processScheduled();
+
+      expect(mockPrismaService.scheduledMessage.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { status: 'failed' } }),
+      );
     });
   });
 });
@@ -11836,36 +15049,174 @@ describe("SessionsService", () => {
 ```
 ---
 
+## File : `test/unit/settings/settings.service.spec.ts`
+
+```ts
+import { Test, TestingModule } from '@nestjs/testing';
+import { SettingsService } from '../../../src/modules/settings/settings.service';
+import { mockPrismaService } from '../../mocks/prisma.mock';
+import { PrismaService } from '../../../src/prisma/prisma.service';
+
+const mockAiService = { init: jest.fn() };
+const mockGatewayService = { emitSystemAlert: jest.fn() };
+
+describe('SettingsService', () => {
+  let service: SettingsService;
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        SettingsService,
+        { provide: PrismaService, useValue: mockPrismaService },
+        { provide: 'AiService', useValue: mockAiService },
+        { provide: 'GatewayService', useValue: mockGatewayService },
+      ],
+    })
+      .overrideProvider('AiService')
+      .useValue(mockAiService)
+      .overrideProvider('GatewayService')
+      .useValue(mockGatewayService)
+      .compile();
+
+    service = module.get<SettingsService>(SettingsService);
+    jest.clearAllMocks();
+  });
+
+  describe('getUserSettings', () => {
+    it('masks gemini API key', async () => {
+      mockPrismaService.userSetting.findUnique.mockResolvedValue({
+        userId: 'u1',
+        geminiApiKey: 'abcdefghijklmnop',
+        geminiConfidenceThreshold: 0.6,
+      });
+      const result = await service.getUserSettings('u1');
+      expect(result.geminiApiKey).toBe('****mnop');
+    });
+
+    it('returns null if no settings', async () => {
+      mockPrismaService.userSetting.findUnique.mockResolvedValue(null);
+      const result = await service.getUserSettings('u1');
+      expect(result).toBeNull();
+    });
+  });
+
+  describe('updateUserSettings', () => {
+    it('calls ai.init when geminiApiKey is updated', async () => {
+      mockPrismaService.userSetting.upsert.mockResolvedValue({
+        userId: 'u1',
+        geminiApiKey: 'new-key',
+      });
+      await service.updateUserSettings('u1', { geminiApiKey: 'new-key' });
+      expect(mockAiService.init).toHaveBeenCalledWith('new-key');
+    });
+  });
+
+  describe('getGlobalSettings', () => {
+    it('returns settings as key-value object', async () => {
+      mockPrismaService.globalSetting.findMany.mockResolvedValue([
+        { key: 'maintenanceMode', value: 'false' },
+        { key: 'defaultDailyMessageLimit', value: '1000' },
+      ]);
+      const result = await service.getGlobalSettings();
+      expect(result.maintenanceMode).toBe('false');
+      expect(result.defaultDailyMessageLimit).toBe('1000');
+    });
+  });
+
+  describe('setMaintenanceMode', () => {
+    it('sets maintenance mode to true', async () => {
+      mockPrismaService.globalSetting.upsert.mockResolvedValue({});
+      const result = await service.setMaintenanceMode(true);
+      expect(result).toHaveProperty('maintenanceMode', true);
+      expect(mockPrismaService.globalSetting.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { key: 'maintenanceMode' },
+          update: { value: 'true' },
+        }),
+      );
+    });
+  });
+
+  describe('isMaintenanceMode', () => {
+    it('returns true when maintenance mode is active', async () => {
+      mockPrismaService.globalSetting.findUnique.mockResolvedValue({
+        key: 'maintenanceMode',
+        value: 'true',
+      });
+      const result = await service.isMaintenanceMode();
+      expect(result).toBe(true);
+    });
+
+    it('returns false when maintenance mode is inactive', async () => {
+      mockPrismaService.globalSetting.findUnique.mockResolvedValue({
+        key: 'maintenanceMode',
+        value: 'false',
+      });
+      const result = await service.isMaintenanceMode();
+      expect(result).toBe(false);
+    });
+  });
+
+  describe('broadcastAnnouncement', () => {
+    it('emits system alert to all active users', async () => {
+      mockPrismaService.user.findMany.mockResolvedValue([
+        { id: 'u1' },
+        { id: 'u2' },
+        { id: 'u3' },
+      ]);
+      const result = await service.broadcastAnnouncement(
+        'Server maintenance tonight',
+        'admin1',
+      );
+      expect(result.sent).toBe(3);
+      expect(mockGatewayService.emitSystemAlert).toHaveBeenCalledTimes(3);
+    });
+  });
+});
+
+```
+---
+
 ## File : `test/unit/utils/hash.util.spec.ts`
 
 ```ts
-import { sha256, generateHexToken } from "../../../src/common/utils/hash.util";
+import { sha256, generateHexToken } from '../../../src/common/utils/hash.util';
 
-describe("hash.util", () => {
-  describe("sha256", () => {
-    it("returns consistent 64-char hex string", () => {
-      const hash = sha256("test-input");
+describe('hash.util', () => {
+  describe('sha256', () => {
+    it('returns consistent 64-char hex string', () => {
+      const hash = sha256('test-input');
       expect(hash).toHaveLength(64);
       expect(hash).toMatch(/^[a-f0-9]+$/);
     });
 
-    it("returns same hash for same input", () => {
-      expect(sha256("abc")).toBe(sha256("abc"));
+    it('returns same hash for same input', () => {
+      expect(sha256('abc')).toBe(sha256('abc'));
     });
 
-    it("returns different hash for different inputs", () => {
-      expect(sha256("abc")).not.toBe(sha256("def"));
+    it('returns different hash for different inputs', () => {
+      expect(sha256('abc')).not.toBe(sha256('def'));
+    });
+
+    it('handles empty string', () => {
+      const hash = sha256('');
+      expect(hash).toHaveLength(64);
     });
   });
 
-  describe("generateHexToken", () => {
-    it("returns 48-char hex string by default", () => {
+  describe('generateHexToken', () => {
+    it('returns 48-char hex string by default', () => {
       const token = generateHexToken();
       expect(token).toHaveLength(48);
       expect(token).toMatch(/^[a-f0-9]+$/);
     });
 
-    it("returns unique tokens each time", () => {
+    it('returns custom length token', () => {
+      const token = generateHexToken(10);
+      expect(token).toHaveLength(20);
+    });
+
+    it('returns unique tokens each time', () => {
       expect(generateHexToken()).not.toBe(generateHexToken());
     });
   });
@@ -11880,9 +15231,7 @@ describe("hash.util", () => {
 import { BadRequestException } from '@nestjs/common';
 import { validateMimeType } from '../../../src/common/utils/mime-validator.util';
 
-jest.mock('file-type', () => ({
-  fileTypeFromBuffer: jest.fn(),
-}));
+jest.mock('file-type', () => ({ fileTypeFromBuffer: jest.fn() }));
 
 describe('mime-validator.util', () => {
   let fileTypeFromBuffer: jest.Mock;
@@ -11904,6 +15253,12 @@ describe('mime-validator.util', () => {
     fileTypeFromBuffer.mockResolvedValue({ mime: 'application/pdf' });
     const result = await validateMimeType(Buffer.from('fake'));
     expect(result).toBe('application/pdf');
+  });
+
+  it('returns mime type for valid video/mp4', async () => {
+    fileTypeFromBuffer.mockResolvedValue({ mime: 'video/mp4' });
+    const result = await validateMimeType(Buffer.from('fake'));
+    expect(result).toBe('video/mp4');
   });
 
   it('throws BadRequestException for disallowed mime type', async () => {
@@ -11931,50 +15286,137 @@ import {
   normalizePhone,
   toJid,
   isGroupJid,
-} from "../../../src/common/utils/phone-normalizer.util";
-import { BadRequestException } from "@nestjs/common";
+} from '../../../src/common/utils/phone-normalizer.util';
+import { BadRequestException } from '@nestjs/common';
 
-describe("phone-normalizer.util", () => {
-  describe("normalizePhone", () => {
-    it("converts 08xx to 628xx", () => {
-      expect(normalizePhone("081234567890")).toBe("6281234567890");
+describe('phone-normalizer.util', () => {
+  describe('normalizePhone', () => {
+    it('converts 08xx to 628xx', () => {
+      expect(normalizePhone('081234567890')).toBe('6281234567890');
     });
 
-    it("strips non-digit characters", () => {
-      expect(normalizePhone("+62-812-3456-7890")).toBe("6281234567890");
+    it('strips non-digit characters', () => {
+      expect(normalizePhone('+62-812-3456-7890')).toBe('6281234567890');
     });
 
-    it("keeps number already starting with 62", () => {
-      expect(normalizePhone("6281234567890")).toBe("6281234567890");
+    it('keeps number already starting with 62', () => {
+      expect(normalizePhone('6281234567890')).toBe('6281234567890');
     });
 
-    it("strips leading +", () => {
-      expect(normalizePhone("+6281234567890")).toBe("6281234567890");
+    it('strips leading +', () => {
+      expect(normalizePhone('+6281234567890')).toBe('6281234567890');
     });
 
-    it("throws BadRequestException for empty string", () => {
-      expect(() => normalizePhone("")).toThrow(BadRequestException);
+    it('throws BadRequestException for empty string', () => {
+      expect(() => normalizePhone('')).toThrow(BadRequestException);
     });
 
-    it("throws BadRequestException for too-short number", () => {
-      expect(() => normalizePhone("123")).toThrow(BadRequestException);
+    it('throws BadRequestException for too-short number', () => {
+      expect(() => normalizePhone('123')).toThrow(BadRequestException);
     });
-  });
 
-  describe("toJid", () => {
-    it("returns JID with @s.whatsapp.net suffix", () => {
-      expect(toJid("081234567890")).toBe("6281234567890@s.whatsapp.net");
+    it('handles international numbers without country code prefix', () => {
+      expect(normalizePhone('081234567890')).toMatch(/^62/);
     });
   });
 
-  describe("isGroupJid", () => {
-    it("returns true for group JID", () => {
-      expect(isGroupJid("120363000000@g.us")).toBe(true);
+  describe('toJid', () => {
+    it('returns JID with @s.whatsapp.net suffix', () => {
+      expect(toJid('081234567890')).toBe('6281234567890@s.whatsapp.net');
     });
 
-    it("returns false for regular JID", () => {
-      expect(isGroupJid("6281234567890@s.whatsapp.net")).toBe(false);
+    it('handles number already in 62 format', () => {
+      expect(toJid('6281234567890')).toBe('6281234567890@s.whatsapp.net');
     });
+  });
+
+  describe('isGroupJid', () => {
+    it('returns true for group JID', () => {
+      expect(isGroupJid('120363000000@g.us')).toBe(true);
+    });
+
+    it('returns false for regular JID', () => {
+      expect(isGroupJid('6281234567890@s.whatsapp.net')).toBe(false);
+    });
+  });
+});
+
+```
+---
+
+## File : `test/unit/webhook/webhook.processor.spec.ts`
+
+```ts
+import { Test, TestingModule } from '@nestjs/testing';
+import { WebhookProcessor } from '../../../src/modules/webhook/processors/webhook.processor';
+import { mockPrismaService } from '../../mocks/prisma.mock';
+import { PrismaService } from '../../../src/prisma/prisma.service';
+
+jest.mock('axios');
+import axios from 'axios';
+const mockedAxios = axios as jest.Mocked<typeof axios>;
+
+describe('WebhookProcessor', () => {
+  let processor: WebhookProcessor;
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        WebhookProcessor,
+        { provide: PrismaService, useValue: mockPrismaService },
+      ],
+    }).compile();
+    processor = module.get<WebhookProcessor>(WebhookProcessor);
+    jest.clearAllMocks();
+  });
+
+  const makeJob = (overrides = {}) =>
+    ({
+      data: {
+        userId: 'u1',
+        url: 'https://example.com/webhook',
+        payload: JSON.stringify({ event: 'new_message', text: 'Hello' }),
+        headers: { 'Content-Type': 'application/json' },
+      },
+      attemptsMade: 0,
+      ...overrides,
+    }) as any;
+
+  it('sends POST to webhook URL successfully', async () => {
+    mockedAxios.post = jest.fn().mockResolvedValue({ status: 200 });
+    await expect(processor.process(makeJob())).resolves.not.toThrow();
+    expect(mockedAxios.post).toHaveBeenCalledWith(
+      'https://example.com/webhook',
+      { event: 'new_message', text: 'Hello' },
+      expect.objectContaining({ timeout: 10000 }),
+    );
+  });
+
+  it('throws with delay on failure to trigger retry', async () => {
+    mockedAxios.post = jest
+      .fn()
+      .mockRejectedValue(new Error('Connection refused'));
+    await expect(processor.process(makeJob())).rejects.toThrow(
+      'Connection refused',
+    );
+  });
+
+  it('increases retry delay exponentially based on attempt', async () => {
+    mockedAxios.post = jest.fn().mockRejectedValue(new Error('Timeout'));
+    try {
+      await processor.process(makeJob({ attemptsMade: 2 }));
+    } catch (e) {
+      expect(e.delay).toBe(900 * 1000);
+    }
+  });
+
+  it('uses last retry delay when attempts exceed max', async () => {
+    mockedAxios.post = jest.fn().mockRejectedValue(new Error('Timeout'));
+    try {
+      await processor.process(makeJob({ attemptsMade: 99 }));
+    } catch (e) {
+      expect(e.delay).toBe(21600 * 1000);
+    }
   });
 });
 
@@ -12071,28 +15513,231 @@ describe("WorkflowEngine", () => {
 ```
 ---
 
+## File : `test/unit/workspace/workspace.service.spec.ts`
+
+```ts
+import { Test, TestingModule } from '@nestjs/testing';
+import { NotFoundException, ForbiddenException } from '@nestjs/common';
+import { WorkspaceService } from '../../../src/modules/workspace/workspace.service';
+import { mockPrismaService } from '../../mocks/prisma.mock';
+import { PrismaService } from '../../../src/prisma/prisma.service';
+import { AuditService } from '../../../src/modules/audit/audit.service';
+
+const mockAuditService = { log: jest.fn().mockResolvedValue(undefined) };
+
+describe('WorkspaceService', () => {
+  let service: WorkspaceService;
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        WorkspaceService,
+        { provide: PrismaService, useValue: mockPrismaService },
+        { provide: AuditService, useValue: mockAuditService },
+      ],
+    }).compile();
+    service = module.get<WorkspaceService>(WorkspaceService);
+    jest.clearAllMocks();
+  });
+
+  describe('create', () => {
+    it('creates workspace with owner as member', async () => {
+      mockPrismaService.workspace.create.mockResolvedValue({
+        id: 'ws1',
+        name: 'My Workspace',
+        ownerId: 'u1',
+        members: [{ userId: 'u1', role: 'owner' }],
+      });
+      const result = await service.create(
+        'u1',
+        'u1@test.com',
+        'My Workspace',
+        '127.0.0.1',
+        'jest',
+      );
+      expect(result.name).toBe('My Workspace');
+      expect(mockAuditService.log).toHaveBeenCalledWith(
+        expect.objectContaining({ action: 'CREATE_WORKSPACE' }),
+      );
+    });
+  });
+
+  describe('findAll', () => {
+    it('returns workspaces the user belongs to', async () => {
+      mockPrismaService.workspace.findMany.mockResolvedValue([
+        { id: 'ws1', name: 'Team', members: [] },
+      ]);
+      const result = await service.findAll('u1');
+      expect(result).toHaveLength(1);
+    });
+  });
+
+  describe('invite', () => {
+    it('invites user to workspace', async () => {
+      mockPrismaService.workspace.findFirst.mockResolvedValue({
+        id: 'ws1',
+        ownerId: 'u1',
+      });
+      mockPrismaService.user.findUnique.mockResolvedValue({
+        id: 'u2',
+        email: 'u2@test.com',
+      });
+      mockPrismaService.workspaceMember.upsert.mockResolvedValue({
+        id: 'wm1',
+        userId: 'u2',
+        role: 'member',
+      });
+      const result = await service.invite(
+        'u1',
+        'u1@test.com',
+        'ws1',
+        'u2@test.com',
+        '127.0.0.1',
+        'jest',
+      );
+      expect(result.role).toBe('member');
+      expect(mockAuditService.log).toHaveBeenCalledWith(
+        expect.objectContaining({ action: 'INVITE_MEMBER' }),
+      );
+    });
+
+    it('throws NotFoundException if workspace not owned', async () => {
+      mockPrismaService.workspace.findFirst.mockResolvedValue(null);
+      await expect(
+        service.invite(
+          'u1',
+          'u1@test.com',
+          'ws1',
+          'u2@test.com',
+          '127.0.0.1',
+          'jest',
+        ),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('throws NotFoundException if invited user does not exist', async () => {
+      mockPrismaService.workspace.findFirst.mockResolvedValue({
+        id: 'ws1',
+        ownerId: 'u1',
+      });
+      mockPrismaService.user.findUnique.mockResolvedValue(null);
+      await expect(
+        service.invite(
+          'u1',
+          'u1@test.com',
+          'ws1',
+          'nobody@test.com',
+          '127.0.0.1',
+          'jest',
+        ),
+      ).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('updateMemberPermission', () => {
+    it('updates member role', async () => {
+      mockPrismaService.workspace.findFirst.mockResolvedValue({
+        id: 'ws1',
+        ownerId: 'u1',
+      });
+      mockPrismaService.workspaceMember.updateMany.mockResolvedValue({
+        count: 1,
+      });
+      const result = await service.updateMemberPermission('u1', 'ws1', 'u2', {
+        role: 'admin' as any,
+      });
+      expect(result.count).toBe(1);
+    });
+
+    it('throws ForbiddenException if trying to change own role', async () => {
+      mockPrismaService.workspace.findFirst.mockResolvedValue({
+        id: 'ws1',
+        ownerId: 'u1',
+      });
+      await expect(
+        service.updateMemberPermission('u1', 'ws1', 'u1', {
+          role: 'member' as any,
+        }),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('throws NotFoundException if workspace not owned', async () => {
+      mockPrismaService.workspace.findFirst.mockResolvedValue(null);
+      await expect(
+        service.updateMemberPermission('u1', 'ws1', 'u2', {
+          role: 'member' as any,
+        }),
+      ).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('removeMember', () => {
+    it('removes member from workspace', async () => {
+      mockPrismaService.workspace.findFirst.mockResolvedValue({
+        id: 'ws1',
+        ownerId: 'u1',
+      });
+      mockPrismaService.workspaceMember.deleteMany.mockResolvedValue({
+        count: 1,
+      });
+      await service.removeMember(
+        'u1',
+        'u1@test.com',
+        'ws1',
+        'u2',
+        '127.0.0.1',
+        'jest',
+      );
+      expect(mockPrismaService.workspaceMember.deleteMany).toHaveBeenCalledWith(
+        {
+          where: { workspaceId: 'ws1', userId: 'u2' },
+        },
+      );
+    });
+
+    it('throws ForbiddenException when removing self', async () => {
+      mockPrismaService.workspace.findFirst.mockResolvedValue({
+        id: 'ws1',
+        ownerId: 'u1',
+      });
+      await expect(
+        service.removeMember(
+          'u1',
+          'u1@test.com',
+          'ws1',
+          'u1',
+          '127.0.0.1',
+          'jest',
+        ),
+      ).rejects.toThrow(ForbiddenException);
+    });
+  });
+});
+
+```
+---
+
 ## File : `test/app.e2e-spec.ts`
 
 ```ts
-import { Test, TestingModule } from "@nestjs/testing";
-import { INestApplication, ValidationPipe } from "@nestjs/common";
-import * as request from "supertest";
-import { AppModule } from "../src/app.module";
+import { Test, TestingModule } from '@nestjs/testing';
+import { INestApplication, ValidationPipe } from '@nestjs/common';
+import * as request from 'supertest';
+import { AppModule } from '../src/app.module';
 
-describe("AppModule (e2e)", () => {
+describe('AppModule (e2e)', () => {
   let app: INestApplication;
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
     }).compile();
-
     app = moduleFixture.createNestApplication();
     app.useGlobalPipes(
       new ValidationPipe({ whitelist: true, transform: true }),
     );
-    app.setGlobalPrefix("api");
-    app.enableVersioning({ type: 1 as any, defaultVersion: "1" });
+    app.setGlobalPrefix('api');
+    app.enableVersioning({ type: 1 as any, defaultVersion: '1' });
     await app.init();
   });
 
@@ -12100,32 +15745,37 @@ describe("AppModule (e2e)", () => {
     await app.close();
   });
 
-  it("GET /api/v1/health", async () => {
-    const res = await request(app.getHttpServer()).get("/api/v1/health");
+  it('GET /api/v1/health returns ok', async () => {
+    const res = await request(app.getHttpServer()).get('/api/v1/health');
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ status: "ok" });
+    expect(res.body).toMatchObject({ status: 'ok' });
   });
 
-  it("GET unknown route returns 404", async () => {
-    const res = await request(app.getHttpServer()).get("/api/v1/unknown-route");
+  it('GET unknown route returns 404', async () => {
+    const res = await request(app.getHttpServer()).get('/api/v1/unknown-route');
     expect(res.status).toBe(404);
   });
 
-  it("protected routes return 401 without auth", async () => {
+  it('protected routes return 401 without auth', async () => {
     const routes = [
-      { method: "get", path: "/api/v1/sessions" },
-      { method: "get", path: "/api/v1/messages/logs" },
-      { method: "get", path: "/api/v1/contacts" },
-      { method: "get", path: "/api/v1/broadcast/campaigns" },
-      { method: "get", path: "/api/v1/auto-reply" },
-      { method: "get", path: "/api/v1/workflows" },
-      { method: "get", path: "/api/v1/drip-campaigns" },
-      { method: "get", path: "/api/v1/scheduler" },
-      { method: "get", path: "/api/v1/templates" },
-      { method: "get", path: "/api/v1/keys" },
-      { method: "get", path: "/api/v1/settings/me" },
-      { method: "get", path: "/api/v1/inbox" },
-      { method: "get", path: "/api/v1/analytics/dashboard" },
+      { method: 'get', path: '/api/v1/sessions' },
+      { method: 'get', path: '/api/v1/messages/logs' },
+      { method: 'get', path: '/api/v1/contacts' },
+      { method: 'get', path: '/api/v1/broadcast/campaigns' },
+      { method: 'get', path: '/api/v1/auto-reply' },
+      { method: 'get', path: '/api/v1/workflows' },
+      { method: 'get', path: '/api/v1/drip-campaigns' },
+      { method: 'get', path: '/api/v1/scheduler' },
+      { method: 'get', path: '/api/v1/templates' },
+      { method: 'get', path: '/api/v1/keys' },
+      { method: 'get', path: '/api/v1/settings/me' },
+      { method: 'get', path: '/api/v1/inbox' },
+      { method: 'get', path: '/api/v1/analytics/dashboard' },
+      { method: 'get', path: '/api/v1/profile/s1' },
+      { method: 'get', path: '/api/v1/workspaces' },
+      { method: 'get', path: '/api/v1/tiers' },
+      { method: 'get', path: '/api/v1/calls' },
+      { method: 'get', path: '/api/v1/audit' },
     ];
 
     for (const route of routes) {
@@ -12135,6 +15785,41 @@ describe("AppModule (e2e)", () => {
       expect(res.status).toBe(401);
     }
   });
+
+  it('POST endpoints return 401 without auth', async () => {
+    const routes = [
+      {
+        path: '/api/v1/messages/send',
+        body: { to: '08123456789', message: 'Hi' },
+      },
+      { path: '/api/v1/sessions', body: { name: 'test' } },
+      { path: '/api/v1/broadcast', body: { name: 'T', message: 'H' } },
+      {
+        path: '/api/v1/auto-reply',
+        body: { keyword: 'hi', response: 'hello', matchType: 'exact' },
+      },
+      {
+        path: '/api/v1/workflows',
+        body: { name: 'W', triggerCondition: {}, nodes: [] },
+      },
+      { path: '/api/v1/settings/maintenance', body: { enabled: true } },
+      { path: '/api/v1/settings/announcement', body: { message: 'Test' } },
+    ];
+
+    for (const route of routes) {
+      const res = await request(app.getHttpServer())
+        .post(route.path)
+        .send(route.body);
+      expect(res.status).toBe(401);
+    }
+  });
+
+  it('validation returns 400 on invalid body', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/api/v1/auth/2fa/verify')
+      .send({ tempToken: 123, code: 'toolong123456' });
+    expect(res.status).toBe(400);
+  });
 });
 
 ```
@@ -12143,25 +15828,24 @@ describe("AppModule (e2e)", () => {
 ## File : `test/integration/auth.integration.spec.ts`
 
 ```ts
-import { Test, TestingModule } from "@nestjs/testing";
-import { INestApplication, ValidationPipe } from "@nestjs/common";
-import * as request from "supertest";
-import { AppModule } from "../../src/app.module";
+import { Test, TestingModule } from '@nestjs/testing';
+import { INestApplication, ValidationPipe } from '@nestjs/common';
+import * as request from 'supertest';
+import { AppModule } from '../../src/app.module';
 
-describe("Auth (integration)", () => {
+describe('Auth (integration)', () => {
   let app: INestApplication;
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
     }).compile();
-
     app = moduleFixture.createNestApplication();
     app.useGlobalPipes(
       new ValidationPipe({ whitelist: true, transform: true }),
     );
-    app.setGlobalPrefix("api");
-    app.enableVersioning({ type: 1 as any, defaultVersion: "1" });
+    app.setGlobalPrefix('api');
+    app.enableVersioning({ type: 1 as any, defaultVersion: '1' });
     await app.init();
   });
 
@@ -12169,21 +15853,40 @@ describe("Auth (integration)", () => {
     await app.close();
   });
 
-  it("GET /api/v1/health returns ok", async () => {
-    const res = await request(app.getHttpServer()).get("/api/v1/health");
+  it('GET /api/v1/health returns ok', async () => {
+    const res = await request(app.getHttpServer()).get('/api/v1/health');
     expect(res.status).toBe(200);
-    expect(res.body.status).toBe("ok");
+    expect(res.body.status).toBe('ok');
   });
 
-  it("GET /api/v1/auth/me returns 401 without auth", async () => {
-    const res = await request(app.getHttpServer()).get("/api/v1/auth/me");
+  it('GET /api/v1/auth/me returns 401 without auth', async () => {
+    const res = await request(app.getHttpServer()).get('/api/v1/auth/me');
     expect(res.status).toBe(401);
   });
 
-  it("POST /api/v1/auth/2fa/verify returns 401 with invalid token", async () => {
+  it('POST /api/v1/auth/2fa/verify returns 401 with invalid token', async () => {
     const res = await request(app.getHttpServer())
-      .post("/api/v1/auth/2fa/verify")
-      .send({ tempToken: "invalid-token", code: "123456" });
+      .post('/api/v1/auth/2fa/verify')
+      .send({ tempToken: 'invalid-token', code: '123456' });
+    expect(res.status).toBe(401);
+  });
+
+  it('POST /api/v1/auth/2fa/verify returns 400 with missing fields', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/api/v1/auth/2fa/verify')
+      .send({});
+    expect(res.status).toBe(400);
+  });
+
+  it('POST /api/v1/auth/logout returns 401 without auth', async () => {
+    const res = await request(app.getHttpServer()).post('/api/v1/auth/logout');
+    expect(res.status).toBe(401);
+  });
+
+  it('POST /api/v1/auth/2fa/backup-codes/regenerate returns 401 without auth', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/api/v1/auth/2fa/backup-codes/regenerate')
+      .send({ code: '123456' });
     expect(res.status).toBe(401);
   });
 });
@@ -12194,25 +15897,24 @@ describe("Auth (integration)", () => {
 ## File : `test/integration/messages.integration.spec.ts`
 
 ```ts
-import { Test, TestingModule } from "@nestjs/testing";
-import { INestApplication, ValidationPipe } from "@nestjs/common";
-import * as request from "supertest";
-import { AppModule } from "../../src/app.module";
+import { Test, TestingModule } from '@nestjs/testing';
+import { INestApplication, ValidationPipe } from '@nestjs/common';
+import * as request from 'supertest';
+import { AppModule } from '../../src/app.module';
 
-describe("Messages (integration)", () => {
+describe('Messages (integration)', () => {
   let app: INestApplication;
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
     }).compile();
-
     app = moduleFixture.createNestApplication();
     app.useGlobalPipes(
       new ValidationPipe({ whitelist: true, transform: true }),
     );
-    app.setGlobalPrefix("api");
-    app.enableVersioning({ type: 1 as any, defaultVersion: "1" });
+    app.setGlobalPrefix('api');
+    app.enableVersioning({ type: 1 as any, defaultVersion: '1' });
     await app.init();
   });
 
@@ -12220,15 +15922,87 @@ describe("Messages (integration)", () => {
     await app.close();
   });
 
-  it("POST /api/v1/messages/send returns 401 without auth", async () => {
+  it('POST /api/v1/messages/send returns 401 without auth', async () => {
     const res = await request(app.getHttpServer())
-      .post("/api/v1/messages/send")
-      .send({ to: "08123456789", message: "Hello" });
+      .post('/api/v1/messages/send')
+      .send({ to: '08123456789', message: 'Hello' });
     expect(res.status).toBe(401);
   });
 
-  it("GET /api/v1/messages/logs returns 401 without auth", async () => {
-    const res = await request(app.getHttpServer()).get("/api/v1/messages/logs");
+  it('POST /api/v1/messages/send-contact returns 401 without auth', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/api/v1/messages/send-contact')
+      .send({ to: '08123456789', contacts: ['08111111111'] });
+    expect(res.status).toBe(401);
+  });
+
+  it('GET /api/v1/messages/logs returns 401 without auth', async () => {
+    const res = await request(app.getHttpServer()).get('/api/v1/messages/logs');
+    expect(res.status).toBe(401);
+  });
+
+  it('POST /api/v1/messages/s1/messages/msg1/forward returns 401 without auth', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/api/v1/messages/s1/messages/msg1/forward')
+      .send({ to: '08123456789' });
+    expect(res.status).toBe(401);
+  });
+
+  it('POST /api/v1/messages/s1/messages/msg1/pin returns 401 without auth', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/api/v1/messages/s1/messages/msg1/pin')
+      .send({});
+    expect(res.status).toBe(401);
+  });
+});
+
+```
+---
+
+## File : `test/integration/profile.integration.spec.ts`
+
+```ts
+import { Test, TestingModule } from '@nestjs/testing';
+import { INestApplication, ValidationPipe } from '@nestjs/common';
+import * as request from 'supertest';
+import { AppModule } from '../../src/app.module';
+
+describe('Profile (integration)', () => {
+  let app: INestApplication;
+
+  beforeAll(async () => {
+    const moduleFixture: TestingModule = await Test.createTestingModule({
+      imports: [AppModule],
+    }).compile();
+    app = moduleFixture.createNestApplication();
+    app.useGlobalPipes(
+      new ValidationPipe({ whitelist: true, transform: true }),
+    );
+    app.setGlobalPrefix('api');
+    app.enableVersioning({ type: 1 as any, defaultVersion: '1' });
+    await app.init();
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  it('GET /api/v1/profile/s1 returns 401 without auth', async () => {
+    const res = await request(app.getHttpServer()).get('/api/v1/profile/s1');
+    expect(res.status).toBe(401);
+  });
+
+  it('POST /api/v1/profile/s1/display-name returns 401 without auth', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/api/v1/profile/s1/display-name')
+      .send({ name: 'Bot' });
+    expect(res.status).toBe(401);
+  });
+
+  it('POST /api/v1/profile/s1/contacts/628123/block returns 401 without auth', async () => {
+    const res = await request(app.getHttpServer()).post(
+      '/api/v1/profile/s1/contacts/628123/block',
+    );
     expect(res.status).toBe(401);
   });
 });
@@ -12239,25 +16013,24 @@ describe("Messages (integration)", () => {
 ## File : `test/integration/sessions.integration.spec.ts`
 
 ```ts
-import { Test, TestingModule } from "@nestjs/testing";
-import { INestApplication, ValidationPipe } from "@nestjs/common";
-import * as request from "supertest";
-import { AppModule } from "../../src/app.module";
+import { Test, TestingModule } from '@nestjs/testing';
+import { INestApplication, ValidationPipe } from '@nestjs/common';
+import * as request from 'supertest';
+import { AppModule } from '../../src/app.module';
 
-describe("Sessions (integration)", () => {
+describe('Sessions (integration)', () => {
   let app: INestApplication;
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
     }).compile();
-
     app = moduleFixture.createNestApplication();
     app.useGlobalPipes(
       new ValidationPipe({ whitelist: true, transform: true }),
     );
-    app.setGlobalPrefix("api");
-    app.enableVersioning({ type: 1 as any, defaultVersion: "1" });
+    app.setGlobalPrefix('api');
+    app.enableVersioning({ type: 1 as any, defaultVersion: '1' });
     await app.init();
   });
 
@@ -12265,18 +16038,33 @@ describe("Sessions (integration)", () => {
     await app.close();
   });
 
-  it("GET /api/v1/sessions returns 401 without auth", async () => {
-    const res = await request(app.getHttpServer()).get("/api/v1/sessions");
+  it('GET /api/v1/sessions returns 401 without auth', async () => {
+    const res = await request(app.getHttpServer()).get('/api/v1/sessions');
     expect(res.status).toBe(401);
   });
 
-  it("POST /api/v1/sessions returns 401 without auth", async () => {
+  it('POST /api/v1/sessions returns 401 without auth', async () => {
     const res = await request(app.getHttpServer())
-      .post("/api/v1/sessions")
-      .send({ name: "test" });
+      .post('/api/v1/sessions')
+      .send({ name: 'test' });
+    expect(res.status).toBe(401);
+  });
+
+  it('POST /api/v1/sessions/s1/reconnect returns 401 without auth', async () => {
+    const res = await request(app.getHttpServer()).post(
+      '/api/v1/sessions/s1/reconnect',
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it('DELETE /api/v1/sessions/s1 returns 401 without auth', async () => {
+    const res = await request(app.getHttpServer()).delete(
+      '/api/v1/sessions/s1',
+    );
     expect(res.status).toBe(401);
   });
 });
 
 ```
 ---
+
