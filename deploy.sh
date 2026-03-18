@@ -296,7 +296,7 @@ section "6. PM2"
 # =============================================================
 
 if [ "$SKIP_PM2" = "n" ]; then
-  sudo pnpm install -g pm2
+  sudo npm install -g pm2
   success "PM2 terinstall"
 else
   info "Melewati instalasi PM2"

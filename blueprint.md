@@ -4,35 +4,34 @@
 module.exports = {
   apps: [
     {
-      name: 'wgw-api',
-      script: 'dist/main.js',
+      name: "whatsapp-api",
+      script: "dist/main.js",
       instances: 1,
-      exec_mode: 'fork',
+      exec_mode: "fork",
       autorestart: true,
       watch: false,
-      max_memory_restart: '1G',
+      max_memory_restart: "1G",
       restart_delay: 3000,
       kill_timeout: 10000,
       wait_ready: true,
       listen_timeout: 15000,
       env: {
-        NODE_ENV: 'development',
+        NODE_ENV: "development",
       },
       env_production: {
-        NODE_ENV: 'production',
+        NODE_ENV: "production",
       },
-      error_file: './logs/pm2-error.log',
-      out_file: './logs/pm2-out.log',
-      log_date_format: 'YYYY-MM-DD HH:mm:ss',
+      error_file: "./logs/pm2-error.log",
+      out_file: "./logs/pm2-out.log",
+      log_date_format: "YYYY-MM-DD HH:mm:ss",
       merge_logs: true,
       time: true,
       exp_backoff_restart_delay: 100,
       max_restarts: 10,
-      min_uptime: '5s',
+      min_uptime: "5s",
     },
   ],
 };
-
 
 ```
 ---
@@ -2330,8 +2329,9 @@ export class TierFeatureGuard implements CanActivate {
 ## File : `src/common/guards/tier-throttler.guard.ts`
 
 ```ts
-import { Injectable, ExecutionContext } from "@nestjs/common";
-import { ThrottlerGuard, ThrottlerRequest } from "@nestjs/throttler";
+import { Injectable, ExecutionContext, Inject } from "@nestjs/common";
+import { Reflector } from "@nestjs/core";
+import { ThrottlerGuard, ThrottlerModuleOptions, ThrottlerStorage } from "@nestjs/throttler";
 import { PrismaService } from "../../prisma/prisma.service";
 import { RedisService } from "../../redis/redis.service";
 
@@ -2340,19 +2340,21 @@ import { RedisService } from "../../redis/redis.service";
  * rateLimitPerMinute dari tier aktif user, bukan dari config global.
  *
  * Hierarki:
- *  - Admin/super_admin → limit sangat tinggi (bypass efektif)
+ *  - Admin/super_admin → bypass (skip)
  *  - User dengan tier  → rateLimitPerMinute dari tier
  *  - Tidak ada tier    → fallback 60 req/mnt
- *  - Tidak login       → config global (10 untuk auth endpoint, 100 lainnya)
+ *  - Tidak login       → 100 req/mnt (global default)
  */
 @Injectable()
 export class TierThrottlerGuard extends ThrottlerGuard {
   constructor(
-    options: any,
-    storageService: any,
-    reflector: any,
-    private readonly prismaService: PrismaService,
-    private readonly redisService: RedisService,
+    options: ThrottlerModuleOptions,
+    storageService: ThrottlerStorage,
+    reflector: Reflector,
+    // Inject eksplisit karena NestJS tidak bisa resolve parameter
+    // tambahan di luar 3 parameter milik ThrottlerGuard
+    @Inject(PrismaService) private readonly prismaService: PrismaService,
+    @Inject(RedisService) private readonly redisService: RedisService
   ) {
     super(options, storageService, reflector);
   }
@@ -2365,7 +2367,6 @@ export class TierThrottlerGuard extends ThrottlerGuard {
   protected async shouldSkip(context: ExecutionContext): Promise<boolean> {
     const req = context.switchToHttp().getRequest();
     const user = req.user;
-    // Admin tidak dibatasi
     if (user?.role === "admin" || user?.role === "super_admin") return true;
     return false;
   }
@@ -2373,9 +2374,8 @@ export class TierThrottlerGuard extends ThrottlerGuard {
   protected async getLimit(context: ExecutionContext): Promise<number> {
     const req = context.switchToHttp().getRequest();
     const user = req.user;
-    if (!user) return 100; // unauthenticated → global default
+    if (!user) return 100;
 
-    // Cek cache Redis
     const cacheKey = `tier:ratelimit:${user.id}`;
     const cached = await this.redisService.get<number>(cacheKey);
     if (cached !== null && cached !== undefined) return cached;
@@ -2386,12 +2386,12 @@ export class TierThrottlerGuard extends ThrottlerGuard {
     });
 
     const limit = userTier?.tier?.rateLimitPerMinute ?? 60;
-    await this.redisService.set(cacheKey, limit, 300); // cache 5 menit
+    await this.redisService.set(cacheKey, limit, 300);
     return limit;
   }
 
   protected async getTtl(): Promise<number> {
-    return 60000; // 1 menit dalam ms (ThrottlerGuard v6 pakai ms)
+    return 60000;
   }
 }
 
