@@ -1,10 +1,10 @@
 import { BadRequestException } from '@nestjs/common';
+import * as FileType from 'file-type';
 import { AllAllowedMimeTypes } from '../constants/mime-types.constant';
 import { ErrorCodes } from '../constants/error-codes.constant';
 
 export async function validateMimeType(buffer: Buffer): Promise<string> {
-  const { fileTypeFromBuffer } = await import('file-type');
-  const type = await fileTypeFromBuffer(buffer);
+  const type = await FileType.fromBuffer(buffer);
   if (
     !type ||
     !(AllAllowedMimeTypes as readonly string[]).includes(type.mime)

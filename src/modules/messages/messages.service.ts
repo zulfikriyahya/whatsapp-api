@@ -18,11 +18,11 @@ import { validateMimeType } from '../../common/utils/mime-validator.util';
 import { SendMessageDto } from './dto/send-message.dto';
 import { SendMediaDto } from './dto/send-media.dto';
 import { SendLocationDto } from './dto/send-location.dto';
+import { SendLiveLocationDto } from './dto/send-live-location.dto';
 import { SendPollDto } from './dto/send-poll.dto';
 import { SendContactDto } from './dto/send-contact.dto';
-import { QueryMessagesDto } from './dto/query-messages.dto';
-import { SendLiveLocationDto } from './dto/send-live-location.dto';
 import { SendVoiceNoteDto } from './dto/send-voice-note.dto';
+import { QueryMessagesDto } from './dto/query-messages.dto';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -148,6 +148,32 @@ export class MessagesService {
     return { messageId: result?.id?._serialized };
   }
 
+  async sendLiveLocation(userId: string, dto: SendLiveLocationDto) {
+    const sessionId = await this.resolveSession(userId, dto.sessionId);
+    const jid = toJid(dto.to);
+    const client = this.manager.getClient(sessionId);
+    if (!client)
+      throw new BadRequestException({ code: ErrorCodes.SESSION_NOT_CONNECTED });
+    const result = await client.sendMessage(jid, '', {
+      location: {
+        latitude: dto.latitude,
+        longitude: dto.longitude,
+        description: dto.description,
+      },
+      live: true,
+      liveLocationDurationMs: (dto.duration ?? 60) * 1000,
+    } as any);
+    await this.logMessage(
+      userId,
+      sessionId,
+      dto.to,
+      `LiveLocation:${dto.latitude},${dto.longitude}`,
+      MessageType.location,
+      MessageStatus.success,
+    );
+    return { messageId: result?.id?._serialized };
+  }
+
   async sendPoll(userId: string, dto: SendPollDto) {
     const sessionId = await this.resolveSession(userId, dto.sessionId);
     const jid = toJid(dto.to);
@@ -179,6 +205,36 @@ export class MessagesService {
       dto.to,
       '[vCard]',
       MessageType.vcard,
+      MessageStatus.success,
+    );
+    return { messageId: result?.id?._serialized };
+  }
+
+  async sendVoiceNote(
+    userId: string,
+    dto: SendVoiceNoteDto,
+    file: Express.Multer.File,
+  ) {
+    const sessionId = await this.resolveSession(userId, dto.sessionId);
+    const jid = toJid(dto.to);
+    const mime = await validateMimeType(file.buffer);
+    const media = new MessageMedia(
+      mime,
+      file.buffer.toString('base64'),
+      file.originalname,
+    );
+    const client = this.manager.getClient(sessionId);
+    if (!client)
+      throw new BadRequestException({ code: ErrorCodes.SESSION_NOT_CONNECTED });
+    const result = await client.sendMessage(jid, media, {
+      sendAudioAsVoice: true,
+    } as any);
+    await this.logMessage(
+      userId,
+      sessionId,
+      dto.to,
+      '[VoiceNote]',
+      MessageType.audio,
       MessageStatus.success,
     );
     return { messageId: result?.id?._serialized };
@@ -325,76 +381,25 @@ export class MessagesService {
   }
 
   async exportLogsPdf(userId: string, dto: QueryMessagesDto): Promise<Buffer> {
-    const result = await this.getLogs(userId, { ...dto, limit: 1000, page: 1 });
-    const rows = result.data.map((r) => ({
+    const where: any = { userId };
+    if (dto.status) where.status = dto.status;
+    if (dto.sessionId) where.sessionId = dto.sessionId;
+
+    const data = await this.prisma.messageLog.findMany({
+      where,
+      take: 1000,
+      orderBy: { timestamp: 'desc' },
+    });
+
+    const rows = data.map((r) => ({
       timestamp: new Date(r.timestamp).toLocaleString('id-ID'),
       target: r.target,
       type: r.messageType,
       status: r.status,
       message: String(r.message ?? '').slice(0, 50),
     }));
+
     return generatePdf('Riwayat Pesan', rows);
-  }
-
-  async sendLiveLocation(userId: string, dto: SendLiveLocationDto) {
-    const sessionId = await this.resolveSession(userId, dto.sessionId);
-    const jid = toJid(dto.to);
-    const client = this.manager.getClient(sessionId);
-    if (!client)
-      throw new BadRequestException({ code: ErrorCodes.SESSION_NOT_CONNECTED });
-
-    const result = await client.sendMessage(jid, '', {
-      location: {
-        latitude: dto.latitude,
-        longitude: dto.longitude,
-        description: dto.description,
-      },
-      live: true,
-      liveLocationDurationMs: (dto.duration ?? 60) * 1000,
-    } as any);
-
-    await this.logMessage(
-      userId,
-      sessionId,
-      dto.to,
-      `LiveLocation:${dto.latitude},${dto.longitude}`,
-      MessageType.location,
-      MessageStatus.success,
-    );
-    return { messageId: result?.id?._serialized };
-  }
-
-  async sendVoiceNote(
-    userId: string,
-    dto: SendVoiceNoteDto,
-    file: Express.Multer.File,
-  ) {
-    const sessionId = await this.resolveSession(userId, dto.sessionId);
-    const jid = toJid(dto.to);
-    const mime = await validateMimeType(file.buffer);
-    const media = new MessageMedia(
-      mime,
-      file.buffer.toString('base64'),
-      file.originalname,
-    );
-
-    const client = this.manager.getClient(sessionId);
-    if (!client)
-      throw new BadRequestException({ code: ErrorCodes.SESSION_NOT_CONNECTED });
-
-    const result = await client.sendMessage(jid, media, {
-      sendAudioAsVoice: true,
-    } as any);
-
-    await this.logMessage(
-      userId,
-      sessionId,
-      dto.to,
-      '[VoiceNote]',
-      MessageType.audio,
-      MessageStatus.success,
-    );
-    return { messageId: result?.id?._serialized };
   }
 
   private async resolveSession(

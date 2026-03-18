@@ -455,7 +455,7 @@
 
 ## 27. 🧠 AI Smart Reply (Google Gemini)
 
-- Integrasi Google Gemini (model: `gemini-2.5-flash`)
+- Integrasi Google Gemini (model: `gemini-3-flash-preview`)
 - API key dikonfigurasi via UI Settings atau environment variable (DB prioritas)
 - Response selalu berformat JSON: `{ intent, reply, confidence }`
 - Confidence threshold yang bisa dikonfigurasi (default 0.6)
