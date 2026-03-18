@@ -1,4 +1,9 @@
-import { Module } from '@nestjs/common';
+import {
+  Module,
+  NestModule,
+  MiddlewareConsumer,
+  RequestMethod,
+} from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { ScheduleModule } from '@nestjs/schedule';
@@ -28,6 +33,7 @@ import { ApiKeysModule } from './modules/api-keys/api-keys.module';
 import { SessionsModule } from './modules/sessions/sessions.module';
 import { MessagesModule } from './modules/messages/messages.module';
 import { BroadcastModule } from './modules/broadcast/broadcast.module';
+import { BroadcastListModule } from './modules/broadcast-list/broadcast-list.module';
 import { InboxModule } from './modules/inbox/inbox.module';
 import { GroupsModule } from './modules/groups/groups.module';
 import { ChannelsModule } from './modules/channels/channels.module';
@@ -37,6 +43,7 @@ import { AutoReplyModule } from './modules/auto-reply/auto-reply.module';
 import { WorkflowModule } from './modules/workflow/workflow.module';
 import { DripModule } from './modules/drip/drip.module';
 import { SchedulerModule } from './modules/scheduler/scheduler.module';
+import { ScheduledEventModule } from './modules/scheduled-event/scheduled-event.module';
 import { TemplatesModule } from './modules/templates/templates.module';
 import { WebhookModule } from './modules/webhook/webhook.module';
 import { LabelsModule } from './modules/labels/labels.module';
@@ -50,6 +57,9 @@ import { HealthModule } from './modules/health/health.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { WorkspaceModule } from './modules/workspace/workspace.module';
 import { CleanupModule } from './modules/cleanup/cleanup.module';
+import { ProfileModule } from './modules/profile/profile.module';
+import { CustomerNoteModule } from './modules/customer-note/customer-note.module';
+import { MaintenanceMiddleware } from './common/middlewares/maintenance.middleware';
 
 @Module({
   imports: [
@@ -67,11 +77,8 @@ import { CleanupModule } from './modules/cleanup/cleanup.module';
         throttlerConfig,
       ],
     }),
-
     ThrottlerModule.forRootAsync(throttlerAsyncOptions),
-
     ScheduleModule.forRoot(),
-
     BullModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
@@ -84,12 +91,10 @@ import { CleanupModule } from './modules/cleanup/cleanup.module';
         prefix: config.get('redis.keyPrefix'),
       }),
     }),
-
     PrismaModule,
     RedisModule,
     GatewayModule,
     QueueModule,
-
     AuthModule,
     UsersModule,
     TiersModule,
@@ -97,6 +102,7 @@ import { CleanupModule } from './modules/cleanup/cleanup.module';
     SessionsModule,
     MessagesModule,
     BroadcastModule,
+    BroadcastListModule,
     InboxModule,
     GroupsModule,
     ChannelsModule,
@@ -106,6 +112,7 @@ import { CleanupModule } from './modules/cleanup/cleanup.module';
     WorkflowModule,
     DripModule,
     SchedulerModule,
+    ScheduledEventModule,
     TemplatesModule,
     WebhookModule,
     LabelsModule,
@@ -119,6 +126,19 @@ import { CleanupModule } from './modules/cleanup/cleanup.module';
     NotificationsModule,
     WorkspaceModule,
     CleanupModule,
+    ProfileModule,
+    CustomerNoteModule,
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer
+      .apply(MaintenanceMiddleware)
+      .exclude(
+        { path: 'api/v1/health', method: RequestMethod.GET },
+        { path: 'api/v1/auth/google', method: RequestMethod.GET },
+        { path: 'api/v1/auth/google/callback', method: RequestMethod.GET },
+      )
+      .forRoutes({ path: 'api/*', method: RequestMethod.ALL });
+  }
+}

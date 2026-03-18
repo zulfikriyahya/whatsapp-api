@@ -1,3 +1,10 @@
+import { IsString, IsNotEmpty } from 'class-validator';
+import { ApiProperty } from '@nestjs/swagger';
+
 export class ReactMessageDto {
-  @ApiProperty() @IsString() reaction: string;
+  @ApiProperty({
+    description: 'Emoji reaction. Empty string to remove reaction.',
+  })
+  @IsString()
+  reaction: string;
 }

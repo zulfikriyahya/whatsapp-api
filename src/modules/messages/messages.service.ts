@@ -11,6 +11,7 @@ import {
   normalizePhone,
   toJid,
 } from '../../common/utils/phone-normalizer.util';
+import { generatePdf } from '../../common/utils/pdf-generator.util';
 import { MessageStatus, MessageType, SessionStatus } from '@prisma/client';
 import { MessageMedia } from 'whatsapp-web.js';
 import { validateMimeType } from '../../common/utils/mime-validator.util';
@@ -18,7 +19,12 @@ import { SendMessageDto } from './dto/send-message.dto';
 import { SendMediaDto } from './dto/send-media.dto';
 import { SendLocationDto } from './dto/send-location.dto';
 import { SendPollDto } from './dto/send-poll.dto';
+import { SendContactDto } from './dto/send-contact.dto';
 import { QueryMessagesDto } from './dto/query-messages.dto';
+import { SendLiveLocationDto } from './dto/send-live-location.dto';
+import { SendVoiceNoteDto } from './dto/send-voice-note.dto';
+import * as fs from 'fs';
+import * as path from 'path';
 
 @Injectable()
 export class MessagesService {
@@ -154,19 +160,108 @@ export class MessagesService {
     return { messageId: result?.id?._serialized };
   }
 
-  async deleteMessage(
+  async sendContact(userId: string, dto: SendContactDto) {
+    const sessionId = await this.resolveSession(userId, dto.sessionId);
+    const jid = toJid(dto.to);
+    const client = this.manager.getClient(sessionId);
+    if (!client)
+      throw new BadRequestException({ code: ErrorCodes.SESSION_NOT_CONNECTED });
+    const contacts = await Promise.all(
+      dto.contacts.map(async (num) => {
+        const normalized = normalizePhone(num);
+        return client.getContactById(`${normalized}@s.whatsapp.net`);
+      }),
+    );
+    const result = await client.sendMessage(jid, contacts as any);
+    await this.logMessage(
+      userId,
+      sessionId,
+      dto.to,
+      '[vCard]',
+      MessageType.vcard,
+      MessageStatus.success,
+    );
+    return { messageId: result?.id?._serialized };
+  }
+
+  async editMessage(
     userId: string,
     sessionId: string,
     messageId: string,
-    forEveryone = true,
+    newText: string,
   ) {
     const client = this.manager.getClient(sessionId);
     if (!client)
       throw new BadRequestException({ code: ErrorCodes.SESSION_NOT_CONNECTED });
     const msg = await client.getMessageById(messageId);
     if (!msg) throw new NotFoundException({ code: ErrorCodes.NOT_FOUND });
-    await msg.delete(forEveryone);
-    return { deleted: true };
+    const result = await (msg as any).edit(newText);
+    return { edited: true, messageId: result?.id?._serialized };
+  }
+
+  async forwardMessage(
+    userId: string,
+    sessionId: string,
+    messageId: string,
+    to: string,
+  ) {
+    const client = this.manager.getClient(sessionId);
+    if (!client)
+      throw new BadRequestException({ code: ErrorCodes.SESSION_NOT_CONNECTED });
+    const msg = await client.getMessageById(messageId);
+    if (!msg) throw new NotFoundException({ code: ErrorCodes.NOT_FOUND });
+    const jid = toJid(to);
+    await msg.forward(jid);
+    return { forwarded: true };
+  }
+
+  async pinMessage(
+    userId: string,
+    sessionId: string,
+    messageId: string,
+    duration?: number,
+  ) {
+    const client = this.manager.getClient(sessionId);
+    if (!client)
+      throw new BadRequestException({ code: ErrorCodes.SESSION_NOT_CONNECTED });
+    const msg = await client.getMessageById(messageId);
+    if (!msg) throw new NotFoundException({ code: ErrorCodes.NOT_FOUND });
+    await (msg as any).pin(duration);
+    return { pinned: true };
+  }
+
+  async unpinMessage(userId: string, sessionId: string, messageId: string) {
+    const client = this.manager.getClient(sessionId);
+    if (!client)
+      throw new BadRequestException({ code: ErrorCodes.SESSION_NOT_CONNECTED });
+    const msg = await client.getMessageById(messageId);
+    if (!msg) throw new NotFoundException({ code: ErrorCodes.NOT_FOUND });
+    await (msg as any).unpin();
+    return { unpinned: true };
+  }
+
+  async downloadMedia(
+    userId: string,
+    sessionId: string,
+    messageId: string,
+    storagePath: string,
+  ) {
+    const client = this.manager.getClient(sessionId);
+    if (!client)
+      throw new BadRequestException({ code: ErrorCodes.SESSION_NOT_CONNECTED });
+    const msg = await client.getMessageById(messageId);
+    if (!msg) throw new NotFoundException({ code: ErrorCodes.NOT_FOUND });
+    if (!msg.hasMedia)
+      throw new BadRequestException({ code: ErrorCodes.VALIDATION });
+    const media = await msg.downloadMedia();
+    if (!media) throw new BadRequestException({ code: ErrorCodes.SEND_FAILED });
+    const ext = media.mimetype.split('/')[1]?.split(';')[0] ?? 'bin';
+    const filename = `${messageId}.${ext}`;
+    const dir = path.join(storagePath, 'uploads', userId);
+    fs.mkdirSync(dir, { recursive: true });
+    const filePath = path.join(dir, filename);
+    fs.writeFileSync(filePath, Buffer.from(media.data, 'base64'));
+    return { filename, mimetype: media.mimetype, path: filePath };
   }
 
   async reactMessage(
@@ -182,6 +277,21 @@ export class MessagesService {
     if (!msg) throw new NotFoundException({ code: ErrorCodes.NOT_FOUND });
     await msg.react(reaction);
     return { reacted: true };
+  }
+
+  async deleteMessage(
+    userId: string,
+    sessionId: string,
+    messageId: string,
+    forEveryone = true,
+  ) {
+    const client = this.manager.getClient(sessionId);
+    if (!client)
+      throw new BadRequestException({ code: ErrorCodes.SESSION_NOT_CONNECTED });
+    const msg = await client.getMessageById(messageId);
+    if (!msg) throw new NotFoundException({ code: ErrorCodes.NOT_FOUND });
+    await msg.delete(forEveryone);
+    return { deleted: true };
   }
 
   async isRegisteredUser(userId: string, sessionId: string, phone: string) {
@@ -212,6 +322,79 @@ export class MessagesService {
       this.prisma.messageLog.count({ where }),
     ]);
     return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
+  }
+
+  async exportLogsPdf(userId: string, dto: QueryMessagesDto): Promise<Buffer> {
+    const result = await this.getLogs(userId, { ...dto, limit: 1000, page: 1 });
+    const rows = result.data.map((r) => ({
+      timestamp: new Date(r.timestamp).toLocaleString('id-ID'),
+      target: r.target,
+      type: r.messageType,
+      status: r.status,
+      message: String(r.message ?? '').slice(0, 50),
+    }));
+    return generatePdf('Riwayat Pesan', rows);
+  }
+
+  async sendLiveLocation(userId: string, dto: SendLiveLocationDto) {
+    const sessionId = await this.resolveSession(userId, dto.sessionId);
+    const jid = toJid(dto.to);
+    const client = this.manager.getClient(sessionId);
+    if (!client)
+      throw new BadRequestException({ code: ErrorCodes.SESSION_NOT_CONNECTED });
+
+    const result = await client.sendMessage(jid, '', {
+      location: {
+        latitude: dto.latitude,
+        longitude: dto.longitude,
+        description: dto.description,
+      },
+      live: true,
+      liveLocationDurationMs: (dto.duration ?? 60) * 1000,
+    } as any);
+
+    await this.logMessage(
+      userId,
+      sessionId,
+      dto.to,
+      `LiveLocation:${dto.latitude},${dto.longitude}`,
+      MessageType.location,
+      MessageStatus.success,
+    );
+    return { messageId: result?.id?._serialized };
+  }
+
+  async sendVoiceNote(
+    userId: string,
+    dto: SendVoiceNoteDto,
+    file: Express.Multer.File,
+  ) {
+    const sessionId = await this.resolveSession(userId, dto.sessionId);
+    const jid = toJid(dto.to);
+    const mime = await validateMimeType(file.buffer);
+    const media = new MessageMedia(
+      mime,
+      file.buffer.toString('base64'),
+      file.originalname,
+    );
+
+    const client = this.manager.getClient(sessionId);
+    if (!client)
+      throw new BadRequestException({ code: ErrorCodes.SESSION_NOT_CONNECTED });
+
+    const result = await client.sendMessage(jid, media, {
+      sendAudioAsVoice: true,
+    } as any);
+
+    await this.logMessage(
+      userId,
+      sessionId,
+      dto.to,
+      '[VoiceNote]',
+      MessageType.audio,
+      MessageStatus.success,
+    );
+    return { messageId: result?.id?._serialized };
   }
 
   private async resolveSession(

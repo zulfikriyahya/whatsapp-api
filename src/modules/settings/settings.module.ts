@@ -1,10 +1,11 @@
-import { Module } from "@nestjs/common";
-import { SettingsController } from "./settings.controller";
-import { SettingsService } from "./settings.service";
-import { AiModule } from "../ai/ai.module";
+import { Module } from '@nestjs/common';
+import { SettingsController } from './settings.controller';
+import { SettingsService } from './settings.service';
+import { AiModule } from '../ai/ai.module';
+import { GatewayModule } from '../../gateway/gateway.module';
 
 @Module({
-  imports: [AiModule],
+  imports: [AiModule, GatewayModule],
   controllers: [SettingsController],
   providers: [SettingsService],
   exports: [SettingsService],

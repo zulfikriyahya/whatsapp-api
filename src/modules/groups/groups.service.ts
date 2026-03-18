@@ -1,10 +1,10 @@
+import { Injectable, BadRequestException } from '@nestjs/common';
+import { SessionManagerService } from '../sessions/session-manager.service';
+import { ErrorCodes } from '../../common/constants/error-codes.constant';
 import {
-  Injectable,
-  BadRequestException,
-  NotFoundException,
-} from "@nestjs/common";
-import { SessionManagerService } from "../sessions/session-manager.service";
-import { ErrorCodes } from "../../common/constants/error-codes.constant";
+  MembershipRequestDto,
+  MembershipRequestAction,
+} from './dto/membership-request.dto';
 
 @Injectable()
 export class GroupsService {
@@ -97,5 +97,28 @@ export class GroupsService {
 
   async getInviteInfo(sessionId: string, inviteCode: string) {
     return this.client(sessionId).getInviteInfo(inviteCode);
+  }
+
+  async handleMembershipRequest(
+    sessionId: string,
+    groupId: string,
+    dto: MembershipRequestDto,
+  ) {
+    const group = (await this.client(sessionId).getChatById(groupId)) as any;
+    if (dto.action === MembershipRequestAction.APPROVE) {
+      return group.approveGroupMembershipRequests([dto.requesterJid]);
+    }
+    return group.rejectGroupMembershipRequests([dto.requesterJid]);
+  }
+
+  async getMembershipRequests(sessionId: string, groupId: string) {
+    const group = (await this.client(sessionId).getChatById(groupId)) as any;
+    return group.getGroupMembershipRequests?.() ?? [];
+  }
+
+  async getCommonGroups(sessionId: string, contactId: string) {
+    const contact = await this.client(sessionId).getContactById(contactId);
+    if (!contact) throw new BadRequestException({ code: ErrorCodes.NOT_FOUND });
+    return (contact as any).getCommonGroups?.() ?? [];
   }
 }

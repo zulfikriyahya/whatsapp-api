@@ -1,10 +1,10 @@
-import { Injectable } from "@nestjs/common";
-import { PrismaService } from "../../prisma/prisma.service";
-import { RedisService } from "../../redis/redis.service";
-import { InjectQueue } from "@nestjs/bullmq";
-import { Queue } from "bullmq";
-import { QueueNames } from "../../common/constants/queue-names.constant";
-import { subDays } from "date-fns";
+import { Injectable } from '@nestjs/common';
+import { PrismaService } from '../../prisma/prisma.service';
+import { RedisService } from '../../redis/redis.service';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
+import { QueueNames } from '../../common/constants/queue-names.constant';
+import { subDays, startOfDay, endOfDay, format } from 'date-fns';
 
 @Injectable()
 export class AnalyticsService {
@@ -30,7 +30,7 @@ export class AnalyticsService {
         where: { userId, timestamp: { gte: from } },
       }),
       this.prisma.messageLog.count({
-        where: { userId, status: "success", timestamp: { gte: from } },
+        where: { userId, status: 'success', timestamp: { gte: from } },
       }),
       this.prisma.campaign.count({
         where: { userId, createdAt: { gte: from } },
@@ -38,14 +38,14 @@ export class AnalyticsService {
       this.prisma.campaign.findMany({
         where: { userId },
         take: 5,
-        orderBy: { createdAt: "desc" },
+        orderBy: { createdAt: 'desc' },
       }),
       this.prisma.messageLog.findMany({
         where: { userId },
         take: 20,
-        orderBy: { timestamp: "desc" },
+        orderBy: { timestamp: 'desc' },
       }),
-      this.getChart(userId, days),
+      this.getChartOptimized(userId, days),
     ]);
 
     const successRate =
@@ -68,10 +68,10 @@ export class AnalyticsService {
       webhookCounts,
     ] = await Promise.all([
       this.prisma.whatsappSession.count(),
-      this.prisma.whatsappSession.count({ where: { status: "connected" } }),
-      this.redis.getClient().info("memory"),
-      this.broadcastQueue.getJobCounts("waiting", "active", "failed"),
-      this.webhookQueue.getJobCounts("waiting", "active", "failed"),
+      this.prisma.whatsappSession.count({ where: { status: 'connected' } }),
+      this.redis.getClient().info('memory'),
+      this.broadcastQueue.getJobCounts('waiting', 'active', 'failed'),
+      this.webhookQueue.getJobCounts('waiting', 'active', 'failed'),
     ]);
 
     return {
@@ -92,31 +92,36 @@ export class AnalyticsService {
     };
   }
 
-  private async getChart(userId: string, days: number) {
-    const results: any[] = [];
+  private async getChartOptimized(userId: string, days: number) {
+    const from = startOfDay(subDays(new Date(), days - 1));
+    const to = endOfDay(new Date());
+
+    const logs = await this.prisma.messageLog.findMany({
+      where: { userId, timestamp: { gte: from, lte: to } },
+      select: { timestamp: true, status: true },
+    });
+
+    const buckets: Record<
+      string,
+      { total: number; success: number; failed: number }
+    > = {};
+
     for (let i = days - 1; i >= 0; i--) {
-      const date = subDays(new Date(), i);
-      const start = new Date(date.setHours(0, 0, 0, 0));
-      const end = new Date(date.setHours(23, 59, 59, 999));
-      const [total, success] = await Promise.all([
-        this.prisma.messageLog.count({
-          where: { userId, timestamp: { gte: start, lte: end } },
-        }),
-        this.prisma.messageLog.count({
-          where: {
-            userId,
-            status: "success",
-            timestamp: { gte: start, lte: end },
-          },
-        }),
-      ]);
-      results.push({
-        date: start.toISOString().split("T")[0],
-        total,
-        success,
-        failed: total - success,
-      });
+      const date = format(subDays(new Date(), i), 'yyyy-MM-dd');
+      buckets[date] = { total: 0, success: 0, failed: 0 };
     }
-    return results;
+
+    for (const log of logs) {
+      const date = format(new Date(log.timestamp), 'yyyy-MM-dd');
+      if (!buckets[date]) continue;
+      buckets[date].total++;
+      if (log.status === 'success') buckets[date].success++;
+      else buckets[date].failed++;
+    }
+
+    return Object.entries(buckets).map(([date, counts]) => ({
+      date,
+      ...counts,
+    }));
   }
 }

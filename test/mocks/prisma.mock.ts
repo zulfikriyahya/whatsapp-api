@@ -147,6 +147,7 @@ export const mockPrismaService = {
     deleteMany: jest.fn(),
   },
   globalSetting: {
+    findUnique: jest.fn(),
     findMany: jest.fn(),
     upsert: jest.fn(),
   },
@@ -166,6 +167,7 @@ export const mockPrismaService = {
   },
   workspaceMember: {
     upsert: jest.fn(),
+    updateMany: jest.fn(),
     deleteMany: jest.fn(),
   },
   $transaction: jest.fn((cb) => cb(mockPrismaService)),

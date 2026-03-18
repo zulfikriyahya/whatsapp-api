@@ -1,9 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 import { validateMimeType } from '../../../src/common/utils/mime-validator.util';
 
-jest.mock('file-type', () => ({
-  fileTypeFromBuffer: jest.fn(),
-}));
+jest.mock('file-type', () => ({ fileTypeFromBuffer: jest.fn() }));
 
 describe('mime-validator.util', () => {
   let fileTypeFromBuffer: jest.Mock;
@@ -25,6 +23,12 @@ describe('mime-validator.util', () => {
     fileTypeFromBuffer.mockResolvedValue({ mime: 'application/pdf' });
     const result = await validateMimeType(Buffer.from('fake'));
     expect(result).toBe('application/pdf');
+  });
+
+  it('returns mime type for valid video/mp4', async () => {
+    fileTypeFromBuffer.mockResolvedValue({ mime: 'video/mp4' });
+    const result = await validateMimeType(Buffer.from('fake'));
+    expect(result).toBe('video/mp4');
   });
 
   it('throws BadRequestException for disallowed mime type', async () => {

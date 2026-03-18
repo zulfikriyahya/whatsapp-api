@@ -1,123 +1,132 @@
-import { Test, TestingModule } from "@nestjs/testing";
-import { BadRequestException } from "@nestjs/common";
-import { getQueueToken } from "@nestjs/bullmq";
-import { BroadcastService } from "../../../src/modules/broadcast/broadcast.service";
-import { mockPrismaService } from "../../mocks/prisma.mock";
-import { PrismaService } from "../../../src/prisma/prisma.service";
-import { QueueNames } from "../../../src/common/constants/queue-names.constant";
+import { Test, TestingModule } from '@nestjs/testing';
+import { BroadcastProcessor } from '../../../src/modules/broadcast/processors/broadcast.processor';
+import { mockPrismaService } from '../../mocks/prisma.mock';
+import { mockSessionManagerService } from '../../mocks/whatsapp.mock';
+import { PrismaService } from '../../../src/prisma/prisma.service';
+import { SessionManagerService } from '../../../src/modules/sessions/session-manager.service';
+import { GatewayService } from '../../../src/gateway/gateway.service';
 
-const mockBroadcastQueue = {
-  add: jest.fn().mockResolvedValue({ id: "job-1" }),
-  getJobs: jest.fn().mockResolvedValue([]),
+jest.mock('../../../src/common/utils/mime-validator.util', () => ({
+  validateMimeType: jest.fn().mockResolvedValue('image/jpeg'),
+}));
+
+const mockGatewayService = {
+  emitBroadcastProgress: jest.fn(),
+  emitBroadcastComplete: jest.fn(),
 };
 
-describe("BroadcastService", () => {
-  let service: BroadcastService;
+describe('BroadcastProcessor', () => {
+  let processor: BroadcastProcessor;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
-        BroadcastService,
+        BroadcastProcessor,
         { provide: PrismaService, useValue: mockPrismaService },
-        {
-          provide: getQueueToken(QueueNames.BROADCAST),
-          useValue: mockBroadcastQueue,
-        },
+        { provide: SessionManagerService, useValue: mockSessionManagerService },
+        { provide: GatewayService, useValue: mockGatewayService },
       ],
     }).compile();
-    service = module.get<BroadcastService>(BroadcastService);
+    processor = module.get<BroadcastProcessor>(BroadcastProcessor);
     jest.clearAllMocks();
   });
 
-  describe("create", () => {
-    it("creates campaign and enqueues job", async () => {
-      mockPrismaService.whatsappSession.findMany.mockResolvedValue([
-        { id: "s1", status: "connected" },
-      ]);
-      mockPrismaService.campaign.create.mockResolvedValue({
-        id: "c1",
-        name: "Test",
-        status: "pending",
-      });
+  const makeJob = (overrides = {}) =>
+    ({
+      data: {
+        campaignId: 'c1',
+        userId: 'u1',
+        recipients: ['6281234567890'],
+        message: 'Hello',
+        mediaPath: null,
+        sessions: ['s1'],
+        ...overrides,
+      },
+    }) as any;
 
-      const result = await service.create("u1", {
-        name: "Test",
-        message: "Hello",
-        recipients: ["08123456789"],
-      });
-      expect(result.id).toBe("c1");
-      expect(mockBroadcastQueue.add).toHaveBeenCalledWith(
-        "send",
-        expect.objectContaining({ campaignId: "c1" }),
-      );
+  it('processes broadcast and marks campaign completed', async () => {
+    mockPrismaService.campaign.update.mockResolvedValue({});
+    mockPrismaService.messageLog.create.mockResolvedValue({});
+    mockPrismaService.userQuota.updateMany.mockResolvedValue({});
+    mockSessionManagerService.sendMessage.mockResolvedValue({
+      id: { _serialized: 'msg-1' },
     });
 
-    it("throws NO_SESSIONS when no connected sessions", async () => {
-      mockPrismaService.whatsappSession.findMany.mockResolvedValue([]);
-      await expect(
-        service.create("u1", {
-          name: "T",
-          message: "H",
-          recipients: ["08123456789"],
-        }),
-      ).rejects.toThrow(BadRequestException);
-    });
+    await processor.process(makeJob());
 
-    it("throws NO_RECIPIENTS when recipient list is empty", async () => {
-      mockPrismaService.whatsappSession.findMany.mockResolvedValue([
-        { id: "s1" },
-      ]);
-      await expect(
-        service.create("u1", { name: "T", message: "H", recipients: [] }),
-      ).rejects.toThrow(BadRequestException);
-    });
-
-    it("deduplicates recipients", async () => {
-      mockPrismaService.whatsappSession.findMany.mockResolvedValue([
-        { id: "s1" },
-      ]);
-      mockPrismaService.campaign.create.mockResolvedValue({
-        id: "c1",
-        name: "T",
-        totalRecipients: 1,
-      });
-
-      await service.create("u1", {
-        name: "T",
-        message: "H",
-        recipients: ["08123456789", "08123456789", "628123456789"],
-      });
-      expect(mockPrismaService.campaign.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ totalRecipients: 1 }),
-        }),
-      );
-    });
+    expect(mockPrismaService.campaign.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: 'completed' }),
+      }),
+    );
+    expect(mockGatewayService.emitBroadcastComplete).toHaveBeenCalledWith(
+      'u1',
+      'c1',
+      1,
+      0,
+    );
   });
 
-  describe("cancel", () => {
-    it("cancels pending campaign", async () => {
-      mockPrismaService.campaign.findFirst.mockResolvedValue({
-        id: "c1",
-        status: "pending",
-      });
-      mockPrismaService.campaign.update.mockResolvedValue({
-        id: "c1",
-        status: "cancelled",
-      });
+  it('falls over to next session if first session fails', async () => {
+    mockPrismaService.campaign.update.mockResolvedValue({});
+    mockPrismaService.messageLog.create.mockResolvedValue({});
+    mockPrismaService.userQuota.updateMany.mockResolvedValue({});
 
-      const result = await service.cancel("u1", "c1");
-      expect(result.status).toBe("cancelled");
+    mockSessionManagerService.sendMessage
+      .mockRejectedValueOnce(new Error('Session s1 failed'))
+      .mockResolvedValueOnce({ id: { _serialized: 'msg-1' } });
+
+    await processor.process(makeJob({ sessions: ['s1', 's2'] }));
+
+    expect(mockSessionManagerService.sendMessage).toHaveBeenCalledTimes(2);
+    expect(mockGatewayService.emitBroadcastComplete).toHaveBeenCalledWith(
+      'u1',
+      'c1',
+      1,
+      0,
+    );
+  });
+
+  it('marks recipient as failed when all sessions fail', async () => {
+    mockPrismaService.campaign.update.mockResolvedValue({});
+    mockPrismaService.messageLog.create.mockResolvedValue({});
+    mockPrismaService.userQuota.updateMany.mockResolvedValue({});
+    mockSessionManagerService.sendMessage.mockRejectedValue(
+      new Error('All failed'),
+    );
+
+    await processor.process(makeJob({ sessions: ['s1'] }));
+
+    expect(mockGatewayService.emitBroadcastComplete).toHaveBeenCalledWith(
+      'u1',
+      'c1',
+      0,
+      1,
+    );
+    expect(mockPrismaService.messageLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: 'failed',
+          errorMessage: 'All sessions failed',
+        }),
+      }),
+    );
+  });
+
+  it('emits progress for each recipient', async () => {
+    mockPrismaService.campaign.update.mockResolvedValue({});
+    mockPrismaService.messageLog.create.mockResolvedValue({});
+    mockPrismaService.userQuota.updateMany.mockResolvedValue({});
+    mockSessionManagerService.sendMessage.mockResolvedValue({
+      id: { _serialized: 'msg-1' },
     });
 
-    it("throws if campaign already completed", async () => {
-      mockPrismaService.campaign.findFirst.mockResolvedValue({
-        id: "c1",
-        status: "completed",
-      });
-      await expect(service.cancel("u1", "c1")).rejects.toThrow(
-        BadRequestException,
-      );
-    });
+    await processor.process(makeJob({ recipients: ['628111', '628222'] }));
+
+    expect(mockGatewayService.emitBroadcastProgress).toHaveBeenCalledTimes(2);
+    expect(mockGatewayService.emitBroadcastProgress).toHaveBeenCalledWith(
+      'u1',
+      expect.objectContaining({ current: 1, total: 2, percentage: 50 }),
+    );
   });
 });

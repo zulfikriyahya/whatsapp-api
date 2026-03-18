@@ -2,11 +2,12 @@ import {
   Injectable,
   NotFoundException,
   ForbiddenException,
-} from "@nestjs/common";
-import { PrismaService } from "../../prisma/prisma.service";
-import { AuditService } from "../audit/audit.service";
-import { AuditAction } from "@prisma/client";
-import { ErrorCodes } from "../../common/constants/error-codes.constant";
+} from '@nestjs/common';
+import { PrismaService } from '../../prisma/prisma.service';
+import { AuditService } from '../audit/audit.service';
+import { AuditAction } from '@prisma/client';
+import { ErrorCodes } from '../../common/constants/error-codes.constant';
+import { UpdateMemberPermissionDto } from './dto/update-member-permission.dto';
 
 @Injectable()
 export class WorkspaceService {
@@ -26,7 +27,7 @@ export class WorkspaceService {
       data: {
         name,
         ownerId: userId,
-        members: { create: { userId, role: "owner" } },
+        members: { create: { userId, role: 'owner' } },
       },
       include: { members: true },
     });
@@ -68,7 +69,7 @@ export class WorkspaceService {
     if (!user) throw new NotFoundException({ code: ErrorCodes.NOT_FOUND });
     const member = await this.prisma.workspaceMember.upsert({
       where: { workspaceId_userId: { workspaceId, userId: user.id } },
-      create: { workspaceId, userId: user.id, role: "member" },
+      create: { workspaceId, userId: user.id, role: 'member' },
       update: {},
     });
     await this.audit.log({
@@ -80,6 +81,27 @@ export class WorkspaceService {
       userAgent: ua,
     });
     return member;
+  }
+
+  async updateMemberPermission(
+    ownerId: string,
+    workspaceId: string,
+    memberId: string,
+    dto: UpdateMemberPermissionDto,
+  ) {
+    const ws = await this.prisma.workspace.findFirst({
+      where: { id: workspaceId, ownerId },
+    });
+    if (!ws) throw new NotFoundException({ code: ErrorCodes.NOT_FOUND });
+    if (memberId === ownerId)
+      throw new ForbiddenException({ code: ErrorCodes.FORBIDDEN });
+    return this.prisma.workspaceMember.updateMany({
+      where: { workspaceId, userId: memberId },
+      data: {
+        ...(dto.role ? { role: dto.role } : {}),
+        ...(dto.permissions ? { permissions: dto.permissions } : {}),
+      },
+    });
   }
 
   async removeMember(

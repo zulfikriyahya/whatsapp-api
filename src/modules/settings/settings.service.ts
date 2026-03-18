@@ -1,14 +1,16 @@
-import { Injectable } from "@nestjs/common";
-import { PrismaService } from "../../prisma/prisma.service";
-import { AiService } from "../ai/ai.service";
-import { UpdateSettingsDto } from "./dto/update-settings.dto";
-import { UpdateGlobalSettingsDto } from "./dto/update-global-settings.dto";
+import { Injectable } from '@nestjs/common';
+import { PrismaService } from '../../prisma/prisma.service';
+import { AiService } from '../ai/ai.service';
+import { GatewayService } from '../../gateway/gateway.service';
+import { UpdateSettingsDto } from './dto/update-settings.dto';
+import { UpdateGlobalSettingsDto } from './dto/update-global-settings.dto';
 
 @Injectable()
 export class SettingsService {
   constructor(
     private prisma: PrismaService,
     private ai: AiService,
+    private gateway: GatewayService,
   ) {}
 
   async getUserSettings(userId: string) {
@@ -50,5 +52,32 @@ export class SettingsService {
       ),
     );
     return this.getGlobalSettings();
+  }
+
+  async setMaintenanceMode(enabled: boolean) {
+    await this.prisma.globalSetting.upsert({
+      where: { key: 'maintenanceMode' },
+      create: { key: 'maintenanceMode', value: String(enabled) },
+      update: { value: String(enabled) },
+    });
+    return { maintenanceMode: enabled };
+  }
+
+  async isMaintenanceMode(): Promise<boolean> {
+    const row = await this.prisma.globalSetting.findUnique({
+      where: { key: 'maintenanceMode' },
+    });
+    return row?.value === 'true';
+  }
+
+  async broadcastAnnouncement(message: string, adminId: string) {
+    const users = await this.prisma.user.findMany({
+      where: { isActive: true },
+      select: { id: true },
+    });
+    for (const user of users) {
+      this.gateway.emitSystemAlert(user.id, 'announcement', message);
+    }
+    return { sent: users.length };
   }
 }

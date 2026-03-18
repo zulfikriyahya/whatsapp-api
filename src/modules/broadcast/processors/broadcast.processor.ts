@@ -1,20 +1,20 @@
-import { Processor, WorkerHost } from "@nestjs/bullmq";
-import { Job } from "bullmq";
-import { Logger } from "@nestjs/common";
-import { PrismaService } from "../../../prisma/prisma.service";
-import { SessionManagerService } from "../../sessions/session-manager.service";
-import { GatewayService } from "../../../gateway/gateway.service";
-import { QueueNames } from "../../../common/constants/queue-names.constant";
-import { CampaignStatus, MessageStatus, MessageType } from "@prisma/client";
-import { toJid } from "../../../common/utils/phone-normalizer.util";
-import { MessageMedia } from "whatsapp-web.js";
-import { validateMimeType } from "../../../common/utils/mime-validator.util";
-import * as fs from "fs";
-import * as path from "path";
+import { Processor, WorkerHost } from '@nestjs/bullmq';
+import { Job } from 'bullmq';
+import { Logger } from '@nestjs/common';
+import { PrismaService } from '../../../prisma/prisma.service';
+import { SessionManagerService } from '../../sessions/session-manager.service';
+import { GatewayService } from '../../../gateway/gateway.service';
+import { QueueNames } from '../../../common/constants/queue-names.constant';
+import { CampaignStatus, MessageStatus, MessageType } from '@prisma/client';
+import { toJid } from '../../../common/utils/phone-normalizer.util';
+import { MessageMedia } from 'whatsapp-web.js';
+import { validateMimeType } from '../../../common/utils/mime-validator.util';
+import * as fs from 'fs';
+import * as path from 'path';
 
 @Processor(QueueNames.BROADCAST, { concurrency: 1 })
 export class BroadcastProcessor extends WorkerHost {
-  private logger = new Logger("BroadcastProcessor");
+  private logger = new Logger('BroadcastProcessor');
 
   constructor(
     private prisma: PrismaService,
@@ -41,39 +41,57 @@ export class BroadcastProcessor extends WorkerHost {
     if (mediaPath && fs.existsSync(mediaPath)) {
       const buf = fs.readFileSync(mediaPath);
       const mime = await validateMimeType(buf).catch(() => null);
-      if (mime)
+      if (mime) {
         media = new MessageMedia(
           mime,
-          buf.toString("base64"),
+          buf.toString('base64'),
           path.basename(mediaPath),
         );
+      }
     }
 
     for (let i = 0; i < recipients.length; i++) {
       const recipient = recipients[i];
-      const sessionId = sessions[rrIdx % sessions.length];
+      const jid = toJid(recipient);
+      let sent = false;
+
+      const orderedSessions = [
+        ...sessions.slice(rrIdx % sessions.length),
+        ...sessions.slice(0, rrIdx % sessions.length),
+      ];
       rrIdx++;
 
-      try {
-        const jid = toJid(recipient);
-        if (media) {
-          await this.manager.sendMedia(sessionId, jid, media, message);
-        } else {
-          await this.manager.sendMessage(sessionId, jid, message);
+      for (const sessionId of orderedSessions) {
+        try {
+          if (media) {
+            await this.manager.sendMedia(sessionId, jid, media, message);
+          } else {
+            await this.manager.sendMessage(sessionId, jid, message);
+          }
+
+          successCount++;
+          sent = true;
+
+          await this.prisma.messageLog.create({
+            data: {
+              userId,
+              sessionId,
+              campaignId,
+              target: recipient,
+              message,
+              messageType: MessageType.text,
+              status: MessageStatus.success,
+            },
+          });
+          break;
+        } catch (e) {
+          this.logger.warn(
+            `Session ${sessionId} failed for ${recipient}: ${e.message}, trying next session`,
+          );
         }
-        successCount++;
-        await this.prisma.messageLog.create({
-          data: {
-            userId,
-            sessionId,
-            campaignId,
-            target: recipient,
-            message,
-            messageType: MessageType.text,
-            status: MessageStatus.success,
-          },
-        });
-      } catch (e) {
+      }
+
+      if (!sent) {
         failedCount++;
         await this.prisma.messageLog.create({
           data: {
@@ -84,7 +102,7 @@ export class BroadcastProcessor extends WorkerHost {
             message,
             messageType: MessageType.text,
             status: MessageStatus.failed,
-            errorMessage: e.message,
+            errorMessage: 'All sessions failed',
           },
         });
       }
@@ -111,15 +129,21 @@ export class BroadcastProcessor extends WorkerHost {
       where: { id: campaignId },
       data: { status: CampaignStatus.completed },
     });
+
     this.gateway.emitBroadcastComplete(
       userId,
       campaignId,
       successCount,
       failedCount,
     );
+
     await this.prisma.userQuota.updateMany({
       where: { userId },
       data: { broadcastsThisMonth: { increment: 1 } },
     });
+
+    if (mediaPath && fs.existsSync(mediaPath)) {
+      fs.unlinkSync(mediaPath);
+    }
   }
 }
