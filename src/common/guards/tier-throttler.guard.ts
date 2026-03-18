@@ -4,16 +4,14 @@ import { PrismaService } from "../../prisma/prisma.service";
 import { RedisService } from "../../redis/redis.service";
 
 /**
- * TierThrottlerGuard menggantikan ThrottlerGuard default.
- * Membaca rateLimitPerMinute dari tier aktif user, bukan limit global.
+ * TierThrottlerGuard — override ThrottlerGuard untuk membaca
+ * rateLimitPerMinute dari tier aktif user, bukan dari config global.
  *
- * Hierarki limit:
- *  1. API Key  → rateLimitPerMinute dari tier user pemilik key (default 300 jika tidak ada tier)
- *  2. User JWT → rateLimitPerMinute dari tier user (default 60)
- *  3. Auth endpoint → 10 req/mnt per IP (ditangani ThrottlerModule config)
- *
- * Daftarkan di AppModule sebagai provider global:
- *   { provide: APP_GUARD, useClass: TierThrottlerGuard }
+ * Hierarki:
+ *  - Admin/super_admin → limit sangat tinggi (bypass efektif)
+ *  - User dengan tier  → rateLimitPerMinute dari tier
+ *  - Tidak ada tier    → fallback 60 req/mnt
+ *  - Tidak login       → config global (10 untuk auth endpoint, 100 lainnya)
  */
 @Injectable()
 export class TierThrottlerGuard extends ThrottlerGuard {
@@ -21,42 +19,46 @@ export class TierThrottlerGuard extends ThrottlerGuard {
     options: any,
     storageService: any,
     reflector: any,
-    private prisma: PrismaService,
-    private redis: RedisService,
+    private readonly prismaService: PrismaService,
+    private readonly redisService: RedisService,
   ) {
     super(options, storageService, reflector);
   }
 
   protected async getTracker(req: Record<string, any>): Promise<string> {
-    // Tracker unik per user (jika login) atau per IP (jika tidak login)
     const userId = req.user?.id;
-    return userId ? `throttle:user:${userId}` : req.ip;
+    return userId ? `throttle:user:${userId}` : (req.ip ?? "unknown");
   }
 
-  protected async getLimit(ctx: ExecutionContext): Promise<number> {
-    const req = ctx.switchToHttp().getRequest();
+  protected async shouldSkip(context: ExecutionContext): Promise<boolean> {
+    const req = context.switchToHttp().getRequest();
     const user = req.user;
-    if (!user) return 10; // unauthenticated / auth endpoint
-
     // Admin tidak dibatasi
-    if (user.role === "admin" || user.role === "super_admin") return 10000;
+    if (user?.role === "admin" || user?.role === "super_admin") return true;
+    return false;
+  }
 
-    // Cek cache
+  protected async getLimit(context: ExecutionContext): Promise<number> {
+    const req = context.switchToHttp().getRequest();
+    const user = req.user;
+    if (!user) return 100; // unauthenticated → global default
+
+    // Cek cache Redis
     const cacheKey = `tier:ratelimit:${user.id}`;
-    const cached = await this.redis.get<number>(cacheKey);
-    if (cached) return cached;
+    const cached = await this.redisService.get<number>(cacheKey);
+    if (cached !== null && cached !== undefined) return cached;
 
-    const userTier = await this.prisma.userTier.findUnique({
+    const userTier = await this.prismaService.userTier.findUnique({
       where: { userId: user.id },
       include: { tier: true },
     });
 
     const limit = userTier?.tier?.rateLimitPerMinute ?? 60;
-    await this.redis.set(cacheKey, limit, 300);
+    await this.redisService.set(cacheKey, limit, 300); // cache 5 menit
     return limit;
   }
 
   protected async getTtl(): Promise<number> {
-    return 60; // 1 menit dalam detik
+    return 60000; // 1 menit dalam ms (ThrottlerGuard v6 pakai ms)
   }
 }

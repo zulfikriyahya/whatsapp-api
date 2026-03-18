@@ -4,7 +4,7 @@ import {
   MiddlewareConsumer,
   RequestMethod,
 } from "@nestjs/common";
-import { APP_GUARD } from "@nestjs/core"; // FIX: APP_GUARD ada di @nestjs/core, bukan @nestjs/common
+import { APP_GUARD } from "@nestjs/core";
 import { ConfigModule, ConfigService } from "@nestjs/config";
 import { ThrottlerModule } from "@nestjs/throttler";
 import { ScheduleModule } from "@nestjs/schedule";
@@ -65,6 +65,7 @@ import { StorageModule } from "./modules/storage/storage.module";
 
 import { MaintenanceMiddleware } from "./common/middlewares/maintenance.middleware";
 import { ApiKeyRestrictionGuard } from "./common/guards/api-key-restriction.guard";
+import { TierThrottlerGuard } from "./common/guards/tier-throttler.guard";
 
 @Module({
   imports: [
@@ -138,6 +139,13 @@ import { ApiKeyRestrictionGuard } from "./common/guards/api-key-restriction.guar
     StorageModule,
   ],
   providers: [
+    // FIX 1: TierThrottlerGuard — rate limit berbasis tier user
+    // Menggantikan ThrottlerGuard default dengan versi yang baca tier dari DB
+    {
+      provide: APP_GUARD,
+      useClass: TierThrottlerGuard,
+    },
+    // FIX 2: ApiKeyRestrictionGuard — batasi akses external client
     {
       provide: APP_GUARD,
       useClass: ApiKeyRestrictionGuard,

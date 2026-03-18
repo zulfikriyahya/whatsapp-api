@@ -1,4 +1,4 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Cron } from "@nestjs/schedule";
 import { exec } from "child_process";
@@ -11,39 +11,54 @@ import { pipeline } from "stream";
 const execAsync = promisify(exec);
 const pipelineAsync = promisify(pipeline);
 
-/**
- * BackupService:
- * 1. Backup database MySQL via mysqldump — harian jam 03:00 WIB
- * 2. Backup folder auth sessions (whatsapp-web.js) — harian jam 03:30 WIB
- * 3. Retention: simpan 7 backup terakhir, hapus yang lebih lama
- *
- * Env yang dibutuhkan (otomatis dari DATABASE_URL):
- *   DATABASE_URL=mysql://user:pass@host:port/dbname
- *
- * Opsional: BACKUP_PATH (default: ./storage/backups)
- */
 @Injectable()
-export class BackupService {
+export class BackupService implements OnModuleInit {
   private logger = new Logger("BackupService");
   private backupPath: string;
   private dbBackupPath: string;
   private sessionBackupPath: string;
+  private mysqldumpAvailable = false;
 
-  constructor(private cfg: ConfigService) {
-    this.backupPath = cfg.get<string>("BACKUP_PATH") || "./storage/backups";
+  constructor(private cfg: ConfigService) {}
+
+  async onModuleInit() {
+    this.backupPath =
+      this.cfg.get<string>("BACKUP_PATH") || "./storage/backups";
     this.dbBackupPath = path.join(this.backupPath, "database");
     this.sessionBackupPath = path.join(this.backupPath, "sessions");
 
     fs.mkdirSync(this.dbBackupPath, { recursive: true });
     fs.mkdirSync(this.sessionBackupPath, { recursive: true });
+
+    // FIX: cek ketersediaan mysqldump saat startup
+    await this.checkMysqldump();
+  }
+
+  private async checkMysqldump() {
+    try {
+      await execAsync("mysqldump --version");
+      this.mysqldumpAvailable = true;
+      this.logger.log("BackupService: mysqldump tersedia");
+    } catch {
+      this.mysqldumpAvailable = false;
+      this.logger.warn(
+        "BackupService: mysqldump tidak ditemukan di PATH — backup database dinonaktifkan. " +
+          "Install dengan: sudo apt-get install mysql-client",
+      );
+    }
   }
 
   // Backup database — 03:00 WIB (20:00 UTC)
   @Cron("0 20 * * *")
   async backupDatabase() {
+    if (!this.mysqldumpAvailable) {
+      this.logger.warn("Backup database dilewati: mysqldump tidak tersedia");
+      return;
+    }
+
     this.logger.log("Starting database backup...");
     try {
-      const dbUrl = this.cfg.get<string>("database.url");
+      const dbUrl = this.cfg.get<string>("DATABASE_URL");
       const parsed = this.parseDbUrl(dbUrl);
       if (!parsed) {
         this.logger.error("Cannot parse DATABASE_URL for backup");
@@ -59,10 +74,11 @@ export class BackupService {
         `backup_${timestamp}.sql.gz`,
       );
 
-      // mysqldump → gzip
       const { user, password, host, port, database } = parsed;
       const envPass = password ? `MYSQL_PWD="${password}"` : "";
-      const cmd = `${envPass} mysqldump -u ${user} -h ${host} -P ${port} --single-transaction --routines --triggers ${database}`;
+      const cmd =
+        `${envPass} mysqldump -u ${user} -h ${host} -P ${port}` +
+        ` --single-transaction --routines --triggers ${database}`;
 
       const child = exec(cmd);
       const gzip = zlib.createGzip();
@@ -81,12 +97,13 @@ export class BackupService {
     }
   }
 
-  // Backup session folders — 03:30 WIB (20:30 UTC)
+  // Backup sessions — 03:30 WIB (20:30 UTC)
   @Cron("30 20 * * *")
   async backupSessions() {
     this.logger.log("Starting sessions backup...");
     try {
-      const authPath = this.cfg.get<string>("whatsapp.authPath");
+      const authPath =
+        this.cfg.get<string>("WA_AUTH_PATH") || "./storage/sessions";
       if (!fs.existsSync(authPath)) {
         this.logger.warn("Auth path not found, skipping session backup");
         return;
@@ -102,7 +119,7 @@ export class BackupService {
       );
 
       await execAsync(
-        `tar -czf "${archiveFile}" -C "${path.dirname(authPath)}" "${path.basename(authPath)}"`,
+        `tar -czf "${archiveFile}" -C "${path.dirname(path.resolve(authPath))}" "${path.basename(authPath)}"`,
       );
 
       const sizeMb = (fs.statSync(archiveFile).size / 1024 / 1024).toFixed(2);
@@ -116,11 +133,13 @@ export class BackupService {
     }
   }
 
-  // Hapus backup lama, simpan N terbaru
   private async pruneOldBackups(dir: string, keep: number) {
     const files = fs
       .readdirSync(dir)
-      .map((f) => ({ name: f, time: fs.statSync(path.join(dir, f)).mtimeMs }))
+      .map((f) => ({
+        name: f,
+        time: fs.statSync(path.join(dir, f)).mtimeMs,
+      }))
       .sort((a, b) => b.time - a.time);
 
     const toDelete = files.slice(keep);
@@ -132,8 +151,7 @@ export class BackupService {
 
   private parseDbUrl(url: string) {
     try {
-      // mysql://user:pass@host:port/dbname
-      const match = url.match(/mysql:\/\/([^:]+):([^@]*)@([^:]+):(\d+)\/(.+)/);
+      const match = url?.match(/mysql:\/\/([^:]+):([^@]*)@([^:]+):(\d+)\/(.+)/);
       if (!match) return null;
       return {
         user: match[1],

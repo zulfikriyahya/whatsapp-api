@@ -1,6 +1,5 @@
 // ============================================================
-// WhatsApp Gateway SaaS - Prisma Schema (FINAL)
-// Database: MySQL
+// WhatsApp Gateway SaaS - Prisma Schema (Prisma v7)
 // ============================================================
 
 generator client {
@@ -202,7 +201,7 @@ model Tier {
   maxTemplates           Int      @default(10)
   maxContacts            Int      @default(500)
   rateLimitPerMinute     Int      @default(30)
-  features               Json     // TierFeature[]
+  features               Json
   price                  Decimal? @db.Decimal(10, 2)
   isActive               Boolean  @default(true)
   createdAt              DateTime @default(now())
@@ -277,16 +276,16 @@ model WhatsappSession {
 // ────────────────────────────────────────────────────────────
 
 model ApiKey {
-  id         String    @id @default(uuid())
-  userId     String
-  name       String
-  keyHash    String    @unique
-  keyPreview String    @db.VarChar(8)
-  ipWhitelist String?  @db.Text
-  isSandbox  Boolean   @default(false)  // FIX: sandbox mode
-  expiresAt  DateTime?                  // FIX: API key TTL
-  lastUsedAt DateTime?
-  createdAt  DateTime  @default(now())
+  id          String    @id @default(uuid())
+  userId      String
+  name        String
+  keyHash     String    @unique
+  keyPreview  String    @db.VarChar(8)
+  ipWhitelist String?   @db.Text
+  isSandbox   Boolean   @default(false)
+  expiresAt   DateTime?
+  lastUsedAt  DateTime?
+  createdAt   DateTime  @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -349,7 +348,7 @@ model Inbox {
 }
 
 // ────────────────────────────────────────────────────────────
-// CAMPAIGN (BROADCAST)
+// CAMPAIGN
 // ────────────────────────────────────────────────────────────
 
 model Campaign {

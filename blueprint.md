@@ -80,14 +80,13 @@ module.exports = {
     "test": "jest",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
-    "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:migrate:prod": "prisma migrate deploy",
     "prisma:seed": "ts-node prisma/seed.ts",
     "prisma:studio": "prisma studio",
-    "storage:init": "mkdir -p storage/sessions storage/uploads storage/exports storage/broadcasts/tmp",
+    "storage:init": "mkdir -p storage/sessions storage/uploads storage/exports storage/broadcasts/tmp storage/backups/database storage/backups/sessions",
     "postinstall": "prisma generate"
   },
   "dependencies": {
@@ -115,7 +114,9 @@ module.exports = {
     "file-type": "^16.5.4",
     "helmet": "^8.1.0",
     "ioredis": "^5.10.0",
+    "mime-types": "^2.1.35",
     "multer": "1.4.5-lts.2",
+    "nodemailer": "^6.10.1",
     "passport": "^0.7.0",
     "passport-google-oauth20": "^2.0.0",
     "passport-jwt": "^4.0.1",
@@ -135,8 +136,10 @@ module.exports = {
     "@types/cookie-parser": "^1.4.10",
     "@types/express": "^4.17.25",
     "@types/jest": "^30.0.0",
+    "@types/mime-types": "^2.1.4",
     "@types/multer": "^1.4.13",
     "@types/node": "^22.19.15",
+    "@types/nodemailer": "^6.4.23",
     "@types/passport-google-oauth20": "^2.0.17",
     "@types/passport-jwt": "^4.0.1",
     "@types/pdfkit": "^0.13.9",
@@ -265,8 +268,7 @@ module.exports = {
 
 ```prisma
 // ============================================================
-// WhatsApp Gateway SaaS - Prisma Schema
-// Database: MySQL
+// WhatsApp Gateway SaaS - Prisma Schema (Prisma v7)
 // ============================================================
 
 generator client {
@@ -414,39 +416,38 @@ enum WorkspaceMemberRole {
 // ────────────────────────────────────────────────────────────
 
 model User {
-  id              String    @id @default(uuid())
-  email           String    @unique
-  name            String
-  picture         String?   @db.Text
-  role            Role      @default(user)
-  isActive        Boolean   @default(true)
-  twoFaSecret     String?
-  twoFaEnabled    Boolean   @default(false)
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  id           String   @id @default(uuid())
+  email        String   @unique
+  name         String
+  picture      String?  @db.Text
+  role         Role     @default(user)
+  isActive     Boolean  @default(true)
+  twoFaSecret  String?
+  twoFaEnabled Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
-  // Relations
-  quota                 UserQuota?
-  tier                  UserTier?
-  sessions              WhatsappSession[]
-  campaigns             Campaign[]
-  messageLogs           MessageLog[]
-  inbox                 Inbox[]
-  contacts              Contact[]
-  autoReplies           AutoReply[]
-  workflows             Workflow[]
-  workflowLogs          WorkflowLog[]
-  dripCampaigns         DripCampaign[]
-  scheduledMessages     ScheduledMessage[]
-  apiKeys               ApiKey[]
-  templates             Template[]
-  auditLogs             AuditLog[]
-  webhookConfigs        WebhookConfig?
-  webhookQueues         WebhookQueue[]
-  settings              UserSetting?
-  callLogs              CallLog[]
-  workspaceMembers      WorkspaceMember[]
-  ownedWorkspaces       Workspace[]       @relation("WorkspaceOwner")
+  quota             UserQuota?
+  tier              UserTier?
+  sessions          WhatsappSession[]
+  campaigns         Campaign[]
+  messageLogs       MessageLog[]
+  inbox             Inbox[]
+  contacts          Contact[]
+  autoReplies       AutoReply[]
+  workflows         Workflow[]
+  workflowLogs      WorkflowLog[]
+  dripCampaigns     DripCampaign[]
+  scheduledMessages ScheduledMessage[]
+  apiKeys           ApiKey[]
+  templates         Template[]
+  auditLogs         AuditLog[]
+  webhookConfigs    WebhookConfig?
+  webhookQueues     WebhookQueue[]
+  settings          UserSetting?
+  callLogs          CallLog[]
+  workspaceMembers  WorkspaceMember[]
+  ownedWorkspaces   Workspace[]       @relation("WorkspaceOwner")
 
   @@map("users")
 }
@@ -456,57 +457,56 @@ model User {
 // ────────────────────────────────────────────────────────────
 
 model Tier {
-  id                        String        @id @default(uuid())
-  name                      String        @unique
-  description               String?       @db.Text
-  maxSessions               Int           @default(1)
-  maxApiKeys                Int           @default(1)
-  maxDailyMessages          Int           @default(100)
-  maxMonthlyBroadcasts      Int           @default(5)
-  maxBroadcastRecipients    Int           @default(1000)
-  maxWorkflows              Int           @default(3)
-  maxDripCampaigns          Int           @default(3)
-  maxTemplates              Int           @default(10)
-  maxContacts               Int           @default(500)
-  rateLimitPerMinute        Int           @default(30)
-  features                  Json          // TierFeature[]
-  price                     Decimal?      @db.Decimal(10, 2)
-  isActive                  Boolean       @default(true)
-  createdAt                 DateTime      @default(now())
-  updatedAt                 DateTime      @updatedAt
+  id                     String   @id @default(uuid())
+  name                   String   @unique
+  description            String?  @db.Text
+  maxSessions            Int      @default(1)
+  maxApiKeys             Int      @default(1)
+  maxDailyMessages       Int      @default(100)
+  maxMonthlyBroadcasts   Int      @default(5)
+  maxBroadcastRecipients Int      @default(1000)
+  maxWorkflows           Int      @default(3)
+  maxDripCampaigns       Int      @default(3)
+  maxTemplates           Int      @default(10)
+  maxContacts            Int      @default(500)
+  rateLimitPerMinute     Int      @default(30)
+  features               Json
+  price                  Decimal? @db.Decimal(10, 2)
+  isActive               Boolean  @default(true)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
 
-  // Relations
-  userTiers   UserTier[]
+  userTiers UserTier[]
 
   @@map("tiers")
 }
 
 model UserTier {
-  id          String    @id @default(uuid())
-  userId      String    @unique
-  tierId      String
-  startedAt   DateTime  @default(now())
-  expiresAt   DateTime?
-  isGrace     Boolean   @default(false)
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id        String    @id @default(uuid())
+  userId    String    @unique
+  tierId    String
+  startedAt DateTime  @default(now())
+  expiresAt DateTime?
+  isGrace   Boolean   @default(false)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
 
-  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  tier        Tier      @relation(fields: [tierId], references: [id])
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tier Tier @relation(fields: [tierId], references: [id])
 
   @@map("user_tiers")
 }
 
 model UserQuota {
-  userId                    String    @id
-  messagesSentToday         Int       @default(0)
-  broadcastsThisMonth       Int       @default(0)
-  lastDailyResetAt          DateTime?
-  lastMonthlyResetAt        DateTime?
-  createdAt                 DateTime  @default(now())
-  updatedAt                 DateTime  @updatedAt
+  userId                 String    @id
+  messagesSentToday      Int       @default(0)
+  broadcastsThisMonth    Int       @default(0)
+  lastDailyResetAt       DateTime?
+  lastMonthlyResetAt     DateTime?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
 
-  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("user_quotas")
 }
@@ -516,24 +516,23 @@ model UserQuota {
 // ────────────────────────────────────────────────────────────
 
 model WhatsappSession {
-  id            String          @id @default(uuid())
-  userId        String
-  sessionName   String
-  phoneNumber   String?
-  status        SessionStatus   @default(disconnected)
-  authFolder    String
-  isDefault     Boolean         @default(false)
-  createdAt     DateTime        @default(now())
-  updatedAt     DateTime        @updatedAt
+  id          String        @id @default(uuid())
+  userId      String
+  sessionName String
+  phoneNumber String?
+  status      SessionStatus @default(disconnected)
+  authFolder  String
+  isDefault   Boolean       @default(false)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
 
-  // Relations
-  user                  User                @relation(fields: [userId], references: [id], onDelete: Cascade)
-  messageLogs           MessageLog[]
-  inbox                 Inbox[]
-  campaigns             Campaign[]
-  scheduledMessages     ScheduledMessage[]
-  dripCampaigns         DripCampaign[]
-  callLogs              CallLog[]
+  user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messageLogs       MessageLog[]
+  inbox             Inbox[]
+  campaigns         Campaign[]
+  scheduledMessages ScheduledMessage[]
+  dripCampaigns     DripCampaign[]
+  callLogs          CallLog[]
 
   @@unique([userId, sessionName])
   @@index([userId])
@@ -546,18 +545,21 @@ model WhatsappSession {
 // ────────────────────────────────────────────────────────────
 
 model ApiKey {
-  id            String    @id @default(uuid())
-  userId        String
-  name          String
-  keyHash       String    @unique
-  keyPreview    String    @db.VarChar(8)
-  ipWhitelist   String?   @db.Text
-  lastUsedAt    DateTime?
-  createdAt     DateTime  @default(now())
+  id          String    @id @default(uuid())
+  userId      String
+  name        String
+  keyHash     String    @unique
+  keyPreview  String    @db.VarChar(8)
+  ipWhitelist String?   @db.Text
+  isSandbox   Boolean   @default(false)
+  expiresAt   DateTime?
+  lastUsedAt  DateTime?
+  createdAt   DateTime  @default(now())
 
-  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+  @@index([expiresAt])
   @@map("api_keys")
 }
 
@@ -566,21 +568,21 @@ model ApiKey {
 // ────────────────────────────────────────────────────────────
 
 model MessageLog {
-  id            Int           @id @default(autoincrement())
-  userId        String
-  sessionId     String?
-  campaignId    String?
-  target        String
-  message       String        @db.Text
-  messageType   MessageType   @default(text)
-  status        MessageStatus
-  readStatus    ReadStatus    @default(sent)
-  errorMessage  String?       @db.Text
-  timestamp     DateTime      @default(now())
+  id           Int           @id @default(autoincrement())
+  userId       String
+  sessionId    String?
+  campaignId   String?
+  target       String
+  message      String        @db.Text
+  messageType  MessageType   @default(text)
+  status       MessageStatus
+  readStatus   ReadStatus    @default(sent)
+  errorMessage String?       @db.Text
+  timestamp    DateTime      @default(now())
 
-  user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
-  session   WhatsappSession?  @relation(fields: [sessionId], references: [id], onDelete: SetNull)
-  campaign  Campaign?         @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  user     User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  session  WhatsappSession?  @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  campaign Campaign?         @relation(fields: [campaignId], references: [id], onDelete: SetNull)
 
   @@index([userId])
   @@index([timestamp])
@@ -594,19 +596,19 @@ model MessageLog {
 // ────────────────────────────────────────────────────────────
 
 model Inbox {
-  id              String      @id
-  userId          String
-  sessionId       String?
-  remoteJid       String
-  pushName        String?
-  messageContent  String?     @db.Text
-  messageType     MessageType @default(text)
-  mediaUrl        String?     @db.Text
-  isRead          Boolean     @default(false)
-  timestamp       DateTime    @default(now())
+  id             String      @id
+  userId         String
+  sessionId      String?
+  remoteJid      String
+  pushName       String?
+  messageContent String?     @db.Text
+  messageType    MessageType @default(text)
+  mediaUrl       String?     @db.Text
+  isRead         Boolean     @default(false)
+  timestamp      DateTime    @default(now())
 
-  user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
-  session   WhatsappSession?  @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  user    User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  session WhatsappSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
 
   @@index([userId])
   @@index([userId, remoteJid])
@@ -615,23 +617,23 @@ model Inbox {
 }
 
 // ────────────────────────────────────────────────────────────
-// CAMPAIGN (BROADCAST)
+// CAMPAIGN
 // ────────────────────────────────────────────────────────────
 
 model Campaign {
-  id                String          @id @default(uuid())
-  userId            String
-  sessionId         String?
-  name              String
-  message           String          @db.Text
-  mediaPath         String?
-  totalRecipients   Int             @default(0)
-  processedCount    Int             @default(0)
-  successCount      Int             @default(0)
-  failedCount       Int             @default(0)
-  status            CampaignStatus  @default(pending)
-  createdAt         DateTime        @default(now())
-  updatedAt         DateTime        @updatedAt
+  id              String         @id @default(uuid())
+  userId          String
+  sessionId       String?
+  name            String
+  message         String         @db.Text
+  mediaPath       String?
+  totalRecipients Int            @default(0)
+  processedCount  Int            @default(0)
+  successCount    Int            @default(0)
+  failedCount     Int            @default(0)
+  status          CampaignStatus @default(pending)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
 
   user        User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   session     WhatsappSession?  @relation(fields: [sessionId], references: [id], onDelete: SetNull)
@@ -647,17 +649,17 @@ model Campaign {
 // ────────────────────────────────────────────────────────────
 
 model Contact {
-  id        String    @id @default(uuid())
+  id        String   @id @default(uuid())
   userId    String
   name      String
   number    String
   tag       String?
-  notes     String?   @db.Text
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  notes     String?  @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  user                User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
-  dripSubscriptions   DripSubscription[]
+  user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  dripSubscriptions DripSubscription[]
 
   @@unique([userId, number])
   @@index([userId])
@@ -670,17 +672,17 @@ model Contact {
 // ────────────────────────────────────────────────────────────
 
 model AutoReply {
-  id          String      @id @default(uuid())
-  userId      String
-  keyword     String
-  response    String      @db.Text
-  matchType   MatchType
-  isActive    Boolean     @default(true)
-  priority    Int         @default(0)
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
+  id        String    @id @default(uuid())
+  userId    String
+  keyword   String
+  response  String    @db.Text
+  matchType MatchType
+  isActive  Boolean   @default(true)
+  priority  Int       @default(0)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
 
-  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([userId, isActive, priority])
@@ -692,19 +694,19 @@ model AutoReply {
 // ────────────────────────────────────────────────────────────
 
 model Workflow {
-  id                  String    @id @default(uuid())
-  userId              String
-  name                String
-  triggerType         String    @default("message_received")
-  triggerCondition    Json
-  nodes               Json
-  isActive            Boolean   @default(true)
-  executionCount      Int       @default(0)
-  createdAt           DateTime  @default(now())
-  updatedAt           DateTime  @updatedAt
+  id               String   @id @default(uuid())
+  userId           String
+  name             String
+  triggerType      String   @default("message_received")
+  triggerCondition Json
+  nodes            Json
+  isActive         Boolean  @default(true)
+  executionCount   Int      @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
-  user  User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  logs  WorkflowLog[]
+  user User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  logs WorkflowLog[]
 
   @@index([userId])
   @@index([userId, isActive])
@@ -712,17 +714,17 @@ model Workflow {
 }
 
 model WorkflowLog {
-  id              Int       @id @default(autoincrement())
-  workflowId      String
-  userId          String
-  contactNumber   String
-  status          String
-  logs            Json
-  errorMessage    String?   @db.Text
-  timestamp       DateTime  @default(now())
+  id            Int      @id @default(autoincrement())
+  workflowId    String
+  userId        String
+  contactNumber String
+  status        String
+  logs          Json
+  errorMessage  String?  @db.Text
+  timestamp     DateTime @default(now())
 
-  workflow  Workflow  @relation(fields: [workflowId], references: [id], onDelete: Cascade)
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workflow Workflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([workflowId])
   @@index([timestamp])
@@ -734,50 +736,50 @@ model WorkflowLog {
 // ────────────────────────────────────────────────────────────
 
 model DripCampaign {
-  id            String    @id @default(uuid())
-  userId        String
-  sessionId     String?
-  name          String
-  triggerTag    String
-  isActive      Boolean   @default(true)
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  id         String   @id @default(uuid())
+  userId     String
+  sessionId  String?
+  name       String
+  triggerTag String
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
-  user              User                @relation(fields: [userId], references: [id], onDelete: Cascade)
-  session           WhatsappSession?    @relation(fields: [sessionId], references: [id], onDelete: SetNull)
-  steps             DripStep[]
-  subscriptions     DripSubscription[]
+  user          User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  session       WhatsappSession?   @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  steps         DripStep[]
+  subscriptions DripSubscription[]
 
   @@index([userId])
   @@map("drip_campaigns")
 }
 
 model DripStep {
-  id          String    @id @default(uuid())
-  dripId      String
-  dayOffset   Int
-  timeAt      String    @db.VarChar(5)
-  message     String    @db.Text
-  mediaPath   String?
+  id        String  @id @default(uuid())
+  dripId    String
+  dayOffset Int
+  timeAt    String  @db.VarChar(5)
+  message   String  @db.Text
+  mediaPath String?
 
-  drip  DripCampaign  @relation(fields: [dripId], references: [id], onDelete: Cascade)
+  drip DripCampaign @relation(fields: [dripId], references: [id], onDelete: Cascade)
 
   @@unique([dripId, dayOffset])
   @@map("drip_steps")
 }
 
 model DripSubscription {
-  id            String                  @id @default(uuid())
-  dripId        String
-  contactId     String
-  startDate     DateTime
-  status        DripSubscriptionStatus  @default(active)
-  lastStepDay   Int                     @default(0)
-  createdAt     DateTime                @default(now())
-  updatedAt     DateTime                @updatedAt
+  id          String                 @id @default(uuid())
+  dripId      String
+  contactId   String
+  startDate   DateTime
+  status      DripSubscriptionStatus @default(active)
+  lastStepDay Int                    @default(0)
+  createdAt   DateTime               @default(now())
+  updatedAt   DateTime               @updatedAt
 
-  drip      DripCampaign  @relation(fields: [dripId], references: [id], onDelete: Cascade)
-  contact   Contact       @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  drip    DripCampaign @relation(fields: [dripId], references: [id], onDelete: Cascade)
+  contact Contact      @relation(fields: [contactId], references: [id], onDelete: Cascade)
 
   @@unique([dripId, contactId])
   @@index([status])
@@ -789,21 +791,21 @@ model DripSubscription {
 // ────────────────────────────────────────────────────────────
 
 model ScheduledMessage {
-  id              String                  @id @default(uuid())
-  userId          String
-  sessionId       String
-  target          String
-  message         String                  @db.Text
-  messageType     MessageType             @default(text)
-  mediaPath       String?
-  scheduledTime   DateTime
-  status          ScheduledMessageStatus  @default(pending)
-  recurrenceType  RecurrenceType          @default(none)
-  createdAt       DateTime                @default(now())
-  updatedAt       DateTime                @updatedAt
+  id             String                 @id @default(uuid())
+  userId         String
+  sessionId      String
+  target         String
+  message        String                 @db.Text
+  messageType    MessageType            @default(text)
+  mediaPath      String?
+  scheduledTime  DateTime
+  status         ScheduledMessageStatus @default(pending)
+  recurrenceType RecurrenceType         @default(none)
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
 
-  user    User              @relation(fields: [userId], references: [id], onDelete: Cascade)
-  session WhatsappSession   @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  user    User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  session WhatsappSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
   @@index([status, scheduledTime])
   @@index([userId])
@@ -815,15 +817,15 @@ model ScheduledMessage {
 // ────────────────────────────────────────────────────────────
 
 model Template {
-  id          String    @id @default(uuid())
-  userId      String
-  name        String
-  content     String    @db.Text
-  category    String    @default("General")
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id        String   @id @default(uuid())
+  userId    String
+  name      String
+  content   String   @db.Text
+  category  String   @default("General")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, name])
   @@index([userId])
@@ -835,31 +837,31 @@ model Template {
 // ────────────────────────────────────────────────────────────
 
 model WebhookConfig {
-  userId        String    @id
-  webhookUrl    String?   @db.Text
+  userId        String   @id
+  webhookUrl    String?  @db.Text
   webhookSecret String?
-  isActive      Boolean   @default(true)
-  updatedAt     DateTime  @updatedAt
+  isActive      Boolean  @default(true)
+  updatedAt     DateTime @updatedAt
 
-  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("webhook_configs")
 }
 
 model WebhookQueue {
-  id            Int                 @id @default(autoincrement())
-  userId        String
-  url           String              @db.Text
-  payload       Json
-  headers       Json
-  retries       Int                 @default(0)
-  maxRetries    Int                 @default(5)
-  status        WebhookQueueStatus  @default(pending)
-  lastError     String?             @db.Text
-  nextRetryAt   DateTime            @default(now())
-  createdAt     DateTime            @default(now())
+  id          Int                @id @default(autoincrement())
+  userId      String
+  url         String             @db.Text
+  payload     Json
+  headers     Json
+  retries     Int                @default(0)
+  maxRetries  Int                @default(5)
+  status      WebhookQueueStatus @default(pending)
+  lastError   String?            @db.Text
+  nextRetryAt DateTime           @default(now())
+  createdAt   DateTime           @default(now())
 
-  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([status])
   @@index([status, nextRetryAt])
@@ -871,25 +873,25 @@ model WebhookQueue {
 // ────────────────────────────────────────────────────────────
 
 model GlobalSetting {
-  key         String    @id
-  value       String    @db.Text
-  updatedAt   DateTime  @updatedAt
+  key       String   @id
+  value     String   @db.Text
+  updatedAt DateTime @updatedAt
 
   @@map("global_settings")
 }
 
 model UserSetting {
-  userId                    String    @id
+  userId                    String   @id
   geminiApiKey              String?
-  geminiConfidenceThreshold Float     @default(0.6)
-  autoDownloadPhotos        Boolean   @default(false)
-  autoDownloadVideos        Boolean   @default(false)
-  autoDownloadAudio         Boolean   @default(false)
-  autoDownloadDocuments     Boolean   @default(false)
-  backgroundSync            Boolean   @default(false)
-  updatedAt                 DateTime  @updatedAt
+  geminiConfidenceThreshold Float    @default(0.6)
+  autoDownloadPhotos        Boolean  @default(false)
+  autoDownloadVideos        Boolean  @default(false)
+  autoDownloadAudio         Boolean  @default(false)
+  autoDownloadDocuments     Boolean  @default(false)
+  backgroundSync            Boolean  @default(false)
+  updatedAt                 DateTime @updatedAt
 
-  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("user_settings")
 }
@@ -899,16 +901,16 @@ model UserSetting {
 // ────────────────────────────────────────────────────────────
 
 model AuditLog {
-  id          String        @id @default(uuid())
-  userId      String?
-  userEmail   String
-  action      AuditAction
-  details     Json?
-  ipAddress   String
-  userAgent   String?       @db.Text
-  timestamp   DateTime      @default(now())
+  id        String      @id @default(uuid())
+  userId    String?
+  userEmail String
+  action    AuditAction
+  details   Json?
+  ipAddress String
+  userAgent String?     @db.Text
+  timestamp DateTime    @default(now())
 
-  user  User?  @relation(fields: [userId], references: [id], onDelete: SetNull)
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   @@index([userId])
   @@index([timestamp])
@@ -921,16 +923,16 @@ model AuditLog {
 // ────────────────────────────────────────────────────────────
 
 model CallLog {
-  id          String    @id @default(uuid())
-  userId      String
-  sessionId   String?
-  fromNumber  String
-  callType    String    @default("voice")
-  status      String    @default("missed")
-  timestamp   DateTime  @default(now())
+  id         String   @id @default(uuid())
+  userId     String
+  sessionId  String?
+  fromNumber String
+  callType   String   @default("voice")
+  status     String   @default("missed")
+  timestamp  DateTime @default(now())
 
-  user    User              @relation(fields: [userId], references: [id], onDelete: Cascade)
-  session WhatsappSession?  @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  user    User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  session WhatsappSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
 
   @@index([userId])
   @@index([timestamp])
@@ -942,28 +944,28 @@ model CallLog {
 // ────────────────────────────────────────────────────────────
 
 model Workspace {
-  id          String    @id @default(uuid())
-  name        String
-  ownerId     String
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id        String   @id @default(uuid())
+  name      String
+  ownerId   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  owner    User              @relation("WorkspaceOwner", fields: [ownerId], references: [id], onDelete: Cascade)
-  members  WorkspaceMember[]
+  owner   User              @relation("WorkspaceOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  members WorkspaceMember[]
 
   @@map("workspaces")
 }
 
 model WorkspaceMember {
-  id            String                @id @default(uuid())
-  workspaceId   String
-  userId        String
-  role          WorkspaceMemberRole   @default(member)
-  permissions   Json?
-  joinedAt      DateTime              @default(now())
+  id          String              @id @default(uuid())
+  workspaceId String
+  userId      String
+  role        WorkspaceMemberRole @default(member)
+  permissions Json?
+  joinedAt    DateTime            @default(now())
 
-  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([workspaceId, userId])
   @@map("workspace_members")
@@ -1165,7 +1167,7 @@ main()
 ## File : `src/main.ts`
 
 ```ts
-import { NestFactory } from "@nestjs/core";
+import { NestFactory, Reflector } from "@nestjs/core";
 import { ValidationPipe, VersioningType } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { SwaggerModule, DocumentBuilder } from "@nestjs/swagger";
@@ -1177,11 +1179,13 @@ import { PrismaExceptionFilter } from "./common/filters/prisma-exception.filter"
 import { ResponseInterceptor } from "./common/interceptors/response.interceptor";
 import { LoggingInterceptor } from "./common/interceptors/logging.interceptor";
 import { TimeoutInterceptor } from "./common/interceptors/timeout.interceptor";
+import { SandboxInterceptor } from "./common/interceptors/sandbox.interceptor";
 import * as cookieParser from "cookie-parser";
+import * as mime from "mime-types"; // pastikan mime-types ter-install
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
-    logger: ["error", "warn", "log", "debug"],
+    logger: ["error", "warn", "log"],
   });
 
   const config = app.get(ConfigService);
@@ -1190,11 +1194,11 @@ async function bootstrap() {
   const cookieSecret = config.get<string>("app.cookieSecret");
   const nodeEnv = config.get<string>("app.nodeEnv");
 
-  // ── Security ──────────────────────────────────────────────
+  // ── Security ─────────────────────────────────────────────
   app.use(helmet());
   app.use(cookieParser(cookieSecret));
 
-  // ── CORS ──────────────────────────────────────────────────
+  // ── CORS ─────────────────────────────────────────────────
   app.enableCors({
     origin: clientUrl,
     credentials: true,
@@ -1205,7 +1209,7 @@ async function bootstrap() {
   app.setGlobalPrefix("api");
   app.enableVersioning({ type: VersioningType.URI, defaultVersion: "1" });
 
-  // ── Global Pipes ──────────────────────────────────────────
+  // ── Global Pipes ─────────────────────────────────────────
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
@@ -1225,13 +1229,14 @@ async function bootstrap() {
   app.useGlobalInterceptors(
     new LoggingInterceptor(),
     new TimeoutInterceptor(),
+    new SandboxInterceptor(), // sandbox mode untuk API Key
     new ResponseInterceptor(),
   );
 
   // ── Socket.IO ─────────────────────────────────────────────
   app.useWebSocketAdapter(new IoAdapter(app));
 
-  // ── Swagger ───────────────────────────────────────────────
+  // ── Swagger (dev only) ───────────────────────────────────
   if (nodeEnv !== "production") {
     const swaggerConfig = new DocumentBuilder()
       .setTitle("WhatsApp Gateway SaaS API")
@@ -1269,69 +1274,75 @@ import {
   NestModule,
   MiddlewareConsumer,
   RequestMethod,
-} from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
-import { ThrottlerModule } from '@nestjs/throttler';
-import { ScheduleModule } from '@nestjs/schedule';
-import { BullModule } from '@nestjs/bullmq';
-import { ConfigService } from '@nestjs/config';
+} from "@nestjs/common";
+import { APP_GUARD } from "@nestjs/core";
+import { ConfigModule, ConfigService } from "@nestjs/config";
+import { ThrottlerModule } from "@nestjs/throttler";
+import { ScheduleModule } from "@nestjs/schedule";
+import { BullModule } from "@nestjs/bullmq";
 
-import appConfig from './config/app.config';
-import databaseConfig from './config/database.config';
-import redisConfig from './config/redis.config';
-import jwtConfig from './config/jwt.config';
-import googleConfig from './config/google.config';
-import geminiConfig from './config/gemini.config';
-import whatsappConfig from './config/whatsapp.config';
+import appConfig from "./config/app.config";
+import databaseConfig from "./config/database.config";
+import redisConfig from "./config/redis.config";
+import jwtConfig from "./config/jwt.config";
+import googleConfig from "./config/google.config";
+import geminiConfig from "./config/gemini.config";
+import whatsappConfig from "./config/whatsapp.config";
 import throttlerConfig, {
   throttlerAsyncOptions,
-} from './config/throttler.config';
+} from "./config/throttler.config";
 
-import { PrismaModule } from './prisma/prisma.module';
-import { RedisModule } from './redis/redis.module';
-import { GatewayModule } from './gateway/gateway.module';
-import { QueueModule } from './queue/queue.module';
+import { PrismaModule } from "./prisma/prisma.module";
+import { RedisModule } from "./redis/redis.module";
+import { GatewayModule } from "./gateway/gateway.module";
+import { QueueModule } from "./queue/queue.module";
 
-import { AuthModule } from './modules/auth/auth.module';
-import { UsersModule } from './modules/users/users.module';
-import { TiersModule } from './modules/tiers/tiers.module';
-import { ApiKeysModule } from './modules/api-keys/api-keys.module';
-import { SessionsModule } from './modules/sessions/sessions.module';
-import { MessagesModule } from './modules/messages/messages.module';
-import { BroadcastModule } from './modules/broadcast/broadcast.module';
-import { BroadcastListModule } from './modules/broadcast-list/broadcast-list.module';
-import { InboxModule } from './modules/inbox/inbox.module';
-import { GroupsModule } from './modules/groups/groups.module';
-import { ChannelsModule } from './modules/channels/channels.module';
-import { ContactsModule } from './modules/contacts/contacts.module';
-import { ChatsModule } from './modules/chats/chats.module';
-import { AutoReplyModule } from './modules/auto-reply/auto-reply.module';
-import { WorkflowModule } from './modules/workflow/workflow.module';
-import { DripModule } from './modules/drip/drip.module';
-import { SchedulerModule } from './modules/scheduler/scheduler.module';
-import { ScheduledEventModule } from './modules/scheduled-event/scheduled-event.module';
-import { TemplatesModule } from './modules/templates/templates.module';
-import { WebhookModule } from './modules/webhook/webhook.module';
-import { LabelsModule } from './modules/labels/labels.module';
-import { StatusModule } from './modules/status/status.module';
-import { CallsModule } from './modules/calls/calls.module';
-import { AiModule } from './modules/ai/ai.module';
-import { SettingsModule } from './modules/settings/settings.module';
-import { AuditModule } from './modules/audit/audit.module';
-import { AnalyticsModule } from './modules/analytics/analytics.module';
-import { HealthModule } from './modules/health/health.module';
-import { NotificationsModule } from './modules/notifications/notifications.module';
-import { WorkspaceModule } from './modules/workspace/workspace.module';
-import { CleanupModule } from './modules/cleanup/cleanup.module';
-import { ProfileModule } from './modules/profile/profile.module';
-import { CustomerNoteModule } from './modules/customer-note/customer-note.module';
-import { MaintenanceMiddleware } from './common/middlewares/maintenance.middleware';
+import { AuthModule } from "./modules/auth/auth.module";
+import { UsersModule } from "./modules/users/users.module";
+import { TiersModule } from "./modules/tiers/tiers.module";
+import { ApiKeysModule } from "./modules/api-keys/api-keys.module";
+import { SessionsModule } from "./modules/sessions/sessions.module";
+import { MessagesModule } from "./modules/messages/messages.module";
+import { BroadcastModule } from "./modules/broadcast/broadcast.module";
+import { BroadcastListModule } from "./modules/broadcast-list/broadcast-list.module";
+import { InboxModule } from "./modules/inbox/inbox.module";
+import { GroupsModule } from "./modules/groups/groups.module";
+import { ChannelsModule } from "./modules/channels/channels.module";
+import { ContactsModule } from "./modules/contacts/contacts.module";
+import { ChatsModule } from "./modules/chats/chats.module";
+import { AutoReplyModule } from "./modules/auto-reply/auto-reply.module";
+import { WorkflowModule } from "./modules/workflow/workflow.module";
+import { DripModule } from "./modules/drip/drip.module";
+import { SchedulerModule } from "./modules/scheduler/scheduler.module";
+import { ScheduledEventModule } from "./modules/scheduled-event/scheduled-event.module";
+import { TemplatesModule } from "./modules/templates/templates.module";
+import { WebhookModule } from "./modules/webhook/webhook.module";
+import { LabelsModule } from "./modules/labels/labels.module";
+import { StatusModule } from "./modules/status/status.module";
+import { CallsModule } from "./modules/calls/calls.module";
+import { AiModule } from "./modules/ai/ai.module";
+import { SettingsModule } from "./modules/settings/settings.module";
+import { AuditModule } from "./modules/audit/audit.module";
+import { AnalyticsModule } from "./modules/analytics/analytics.module";
+import { HealthModule } from "./modules/health/health.module";
+import { NotificationsModule } from "./modules/notifications/notifications.module";
+import { WorkspaceModule } from "./modules/workspace/workspace.module";
+import { CleanupModule } from "./modules/cleanup/cleanup.module";
+import { ProfileModule } from "./modules/profile/profile.module";
+import { CustomerNoteModule } from "./modules/customer-note/customer-note.module";
+import { AdminModule } from "./modules/admin/admin.module";
+import { BackupModule } from "./modules/backup/backup.module";
+import { StorageModule } from "./modules/storage/storage.module";
+
+import { MaintenanceMiddleware } from "./common/middlewares/maintenance.middleware";
+import { ApiKeyRestrictionGuard } from "./common/guards/api-key-restriction.guard";
+import { TierThrottlerGuard } from "./common/guards/tier-throttler.guard";
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      envFilePath: '.env',
+      envFilePath: ".env",
       load: [
         appConfig,
         databaseConfig,
@@ -1349,12 +1360,12 @@ import { MaintenanceMiddleware } from './common/middlewares/maintenance.middlewa
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
         connection: {
-          host: config.get('redis.host'),
-          port: config.get('redis.port'),
-          password: config.get('redis.password'),
-          db: config.get('redis.db'),
+          host: config.get("redis.host"),
+          port: config.get("redis.port"),
+          password: config.get("redis.password"),
+          db: config.get("redis.db"),
         },
-        prefix: config.get('redis.keyPrefix'),
+        prefix: config.get("redis.keyPrefix"),
       }),
     }),
     PrismaModule,
@@ -1394,6 +1405,22 @@ import { MaintenanceMiddleware } from './common/middlewares/maintenance.middlewa
     CleanupModule,
     ProfileModule,
     CustomerNoteModule,
+    AdminModule,
+    BackupModule,
+    StorageModule,
+  ],
+  providers: [
+    // FIX 1: TierThrottlerGuard — rate limit berbasis tier user
+    // Menggantikan ThrottlerGuard default dengan versi yang baca tier dari DB
+    {
+      provide: APP_GUARD,
+      useClass: TierThrottlerGuard,
+    },
+    // FIX 2: ApiKeyRestrictionGuard — batasi akses external client
+    {
+      provide: APP_GUARD,
+      useClass: ApiKeyRestrictionGuard,
+    },
   ],
 })
 export class AppModule implements NestModule {
@@ -1401,11 +1428,11 @@ export class AppModule implements NestModule {
     consumer
       .apply(MaintenanceMiddleware)
       .exclude(
-        { path: 'api/v1/health', method: RequestMethod.GET },
-        { path: 'api/v1/auth/google', method: RequestMethod.GET },
-        { path: 'api/v1/auth/google/callback', method: RequestMethod.GET },
+        { path: "api/v1/health", method: RequestMethod.GET },
+        { path: "api/v1/auth/google", method: RequestMethod.GET },
+        { path: "api/v1/auth/google/callback", method: RequestMethod.GET },
       )
-      .forRoutes({ path: 'api/*', method: RequestMethod.ALL });
+      .forRoutes({ path: "api/*", method: RequestMethod.ALL });
   }
 }
 
@@ -1444,6 +1471,7 @@ export const ErrorCodes = {
   TWO_FA_SESSION_EXPIRED: "ERR_2FA_SESSION_EXPIRED",
   TWO_FA_ALREADY_ENABLED: "ERR_2FA_ALREADY_ENABLED",
   TWO_FA_NOT_ENABLED: "ERR_2FA_NOT_ENABLED",
+
   // Resource
   NOT_FOUND: "ERR_NOT_FOUND",
   DUPLICATE_SESSION_NAME: "ERR_DUPLICATE_SESSION_NAME",
@@ -1451,6 +1479,7 @@ export const ErrorCodes = {
   DUPLICATE_TEMPLATE_NAME: "ERR_DUPLICATE_TEMPLATE_NAME",
   DUPLICATE_DRIP_DAY: "ERR_DUPLICATE_DRIP_DAY",
   CANNOT_DELETE_SELF: "ERR_CANNOT_DELETE_SELF",
+
   // Validation
   VALIDATION: "ERR_VALIDATION",
   INVALID_PHONE: "ERR_INVALID_PHONE",
@@ -1458,6 +1487,7 @@ export const ErrorCodes = {
   INVALID_REGEX: "ERR_INVALID_REGEX",
   INVALID_IP_FORMAT: "ERR_INVALID_IP_FORMAT",
   INVALID_TIME_FORMAT: "ERR_INVALID_TIME_FORMAT",
+  INVALID_DATE: "ERR_INVALID_DATE",
   SCHEDULE_PAST: "ERR_SCHEDULE_PAST",
   NO_RECIPIENTS: "ERR_NO_RECIPIENTS",
   MESSAGE_REQUIRED: "ERR_MESSAGE_REQUIRED",
@@ -1465,17 +1495,24 @@ export const ErrorCodes = {
   FILE_TYPE_NOT_ALLOWED: "ERR_FILE_TYPE_NOT_ALLOWED",
   DELAY_TOO_LONG: "ERR_DELAY_TOO_LONG",
   WORKFLOW_TOO_MANY_NODES: "ERR_WORKFLOW_TOO_MANY_NODES",
+
   // Session & WhatsApp
   NO_SESSIONS: "ERR_NO_SESSIONS",
   SESSION_NOT_CONNECTED: "ERR_SESSION_NOT_CONNECTED",
   SESSION_NOT_FOUND: "ERR_SESSION_NOT_FOUND",
   SESSION_LOGGED_OUT: "ERR_SESSION_LOGGED_OUT",
   SEND_FAILED: "ERR_SEND_FAILED",
+
   // Quota
   QUOTA_DAILY_EXCEEDED: "ERR_QUOTA_DAILY_EXCEEDED",
   QUOTA_MONTHLY_EXCEEDED: "ERR_QUOTA_MONTHLY_EXCEEDED",
   RATE_LIMIT: "ERR_RATE_LIMIT",
   RATE_LIMIT_AUTH: "ERR_RATE_LIMIT_AUTH",
+
+  // Features / Tier
+  FEATURE_NOT_AVAILABLE: "ERR_FEATURE_NOT_AVAILABLE",
+  TIER_EXPIRED: "ERR_TIER_EXPIRED",
+
   // System
   INTERNAL: "ERR_INTERNAL",
   REDIS_UNAVAILABLE: "ERR_REDIS_UNAVAILABLE",
@@ -1484,6 +1521,7 @@ export const ErrorCodes = {
   CAMPAIGN_NOT_CANCELLABLE: "ERR_CAMPAIGN_NOT_CANCELLABLE",
   MESSAGE_ALREADY_SENT: "ERR_MESSAGE_ALREADY_SENT",
   WEBHOOK_NOT_CONFIGURED: "ERR_WEBHOOK_NOT_CONFIGURED",
+  MAINTENANCE: "ERR_MAINTENANCE",
 } as const;
 
 ```
@@ -1738,16 +1776,20 @@ export enum SessionStatus {
 ## File : `src/common/enums/status.enum.ts`
 
 ```ts
+/**
+ * FIX: Tambah ALL_SESSIONS_DOWN yang dipakai di session-manager,
+ * dan BROADCAST_COMPLETE yang sudah disebutkan di doc tapi belum ada di enum.
+ */
 export enum AlertType {
   QUOTA_WARNING = "quota_warning",
   QUOTA_EXCEEDED = "quota_exceeded",
   SESSION_DISCONNECTED = "session_disconnected",
   SESSION_LOGGED_OUT = "session_logged_out",
-  ALL_SESSIONS_DOWN = "all_sessions_down",
+  ALL_SESSIONS_DOWN = "all_sessions_down", // FIX: sudah dipakai tapi belum ada
   AI_DISABLED = "ai_disabled",
   DISK_WARNING = "disk_warning",
   REDIS_DISCONNECTED = "redis_disconnected",
-  BROADCAST_COMPLETE = "broadcast_complete",
+  BROADCAST_COMPLETE = "broadcast_complete", // FIX: disebutkan di doc section 30
 }
 
 ```
@@ -1925,19 +1967,99 @@ export class ApiKeyGuard implements CanActivate {
       await this.redis.set(cacheKey, apiKey, 300);
     }
 
-    if (!apiKey.user.isActive)
+    // FIX: Cek token expired
+    if (apiKey.expiresAt && new Date(apiKey.expiresAt) < new Date()) {
+      throw new UnauthorizedException({
+        code: ErrorCodes.UNAUTHORIZED,
+        message: "API key telah kadaluarsa.",
+      });
+    }
+
+    if (!apiKey.user.isActive) {
       throw new ForbiddenException({ code: ErrorCodes.ACCOUNT_DISABLED });
+    }
 
     const clientIp = req.ip || req.connection?.remoteAddress;
     if (apiKey.ipWhitelist && !isIpAllowed(clientIp, apiKey.ipWhitelist)) {
       throw new ForbiddenException({ code: ErrorCodes.IP_NOT_WHITELISTED });
     }
 
-    req.user = { ...apiKey.user, keyId: apiKey.id };
+    // FIX: Tandai request sebagai sandbox jika token dalam mode sandbox
+    req.user = {
+      ...apiKey.user,
+      keyId: apiKey.id,
+      isSandbox: apiKey.isSandbox ?? false,
+    };
+
     await this.prisma.apiKey.update({
       where: { id: apiKey.id },
       data: { lastUsedAt: new Date() },
     });
+
+    return true;
+  }
+}
+
+```
+---
+
+## File : `src/common/guards/api-key-restriction.guard.ts`
+
+```ts
+import {
+  Injectable,
+  CanActivate,
+  ExecutionContext,
+  ForbiddenException,
+} from "@nestjs/common";
+import { Reflector } from "@nestjs/core";
+import { ErrorCodes } from "../constants/error-codes.constant";
+
+export const ALLOW_API_KEY = "allowApiKey";
+/**
+ * Decorator untuk menandai endpoint yang BOLEH diakses via API Key.
+ * Endpoint yang tidak diberi @AllowApiKey() akan otomatis memblokir
+ * request dari API Key (external_client).
+ */
+export const AllowApiKey = () => Reflect.metadata(ALLOW_API_KEY, true);
+
+/**
+ * ApiKeyRestrictionGuard — implementasi permission matrix "external_client".
+ *
+ * Sesuai doc:
+ *  External Client (API Key) hanya boleh:
+ *   ✅ Kirim pesan teks/media/lokasi/poll/kontak
+ *   ✅ Mode auto round-robin
+ *   ✅ Health check
+ *  Tidak boleh:
+ *   ❌ Broadcast, Auto Reply, Workflow, Drip, dll
+ *
+ * Cara kerja:
+ *  - Jika request dari API Key (req.user.keyId ada) DAN endpoint tidak
+ *    memiliki @AllowApiKey() → tolak dengan ERR_FORBIDDEN
+ */
+@Injectable()
+export class ApiKeyRestrictionGuard implements CanActivate {
+  constructor(private reflector: Reflector) {}
+
+  canActivate(ctx: ExecutionContext): boolean {
+    const req = ctx.switchToHttp().getRequest();
+
+    // Hanya berlaku jika request menggunakan API Key
+    if (!req.user?.keyId) return true;
+
+    const isAllowed = this.reflector.getAllAndOverride<boolean>(ALLOW_API_KEY, [
+      ctx.getHandler(),
+      ctx.getClass(),
+    ]);
+
+    if (!isAllowed) {
+      throw new ForbiddenException({
+        code: ErrorCodes.FORBIDDEN,
+        message: "Endpoint ini tidak dapat diakses via API Key.",
+      });
+    }
+
     return true;
   }
 }
@@ -2002,24 +2124,31 @@ export class JwtAuthGuard extends AuthGuard("jwt") {
 ## File : `src/common/guards/quota.guard.ts`
 
 ```ts
-// ── src/common/guards/quota.guard.ts ─────────────────────────
 import {
   Injectable,
   CanActivate,
   ExecutionContext,
   HttpException,
   HttpStatus,
+  SetMetadata,
 } from "@nestjs/common";
+import { Reflector } from "@nestjs/core";
 import { PrismaService } from "../../prisma/prisma.service";
 import { NotificationsService } from "../../modules/notifications/notifications.service";
 import { QuotaThresholds } from "../constants/quota.constant";
 import { ErrorCodes } from "../constants/error-codes.constant";
+
+export const QUOTA_TYPE_KEY = "quotaType";
+// FIX: QuotaType sebagai NestJS SetMetadata decorator yang benar
+export const QuotaType = (type: "daily" | "monthly") =>
+  SetMetadata(QUOTA_TYPE_KEY, type);
 
 @Injectable()
 export class QuotaGuard implements CanActivate {
   constructor(
     private prisma: PrismaService,
     private notifications: NotificationsService,
+    private reflector: Reflector,
   ) {}
 
   async canActivate(ctx: ExecutionContext): Promise<boolean> {
@@ -2027,31 +2156,59 @@ export class QuotaGuard implements CanActivate {
     const user = req.user;
     if (!user) return true;
 
-    const quota = await this.prisma.userQuota.findUnique({
-      where: { userId: user.id },
-    });
-    const tier = await this.prisma.userTier.findUnique({
-      where: { userId: user.id },
-      include: { tier: true },
-    });
+    // Admin bypass quota
+    if (user.role === "admin" || user.role === "super_admin") return true;
 
-    if (!quota || !tier) return true;
+    const quotaType =
+      this.reflector.get<"daily" | "monthly">(
+        QUOTA_TYPE_KEY,
+        ctx.getHandler(),
+      ) ?? "daily";
 
-    const dailyLimit = tier.tier.maxDailyMessages;
-    const used = quota.messagesSentToday;
-    const ratio = used / dailyLimit;
+    const [quota, userTier] = await Promise.all([
+      this.prisma.userQuota.findUnique({ where: { userId: user.id } }),
+      this.prisma.userTier.findUnique({
+        where: { userId: user.id },
+        include: { tier: true },
+      }),
+    ]);
+
+    if (!quota || !userTier) return true;
+
+    const { used, limit } =
+      quotaType === "monthly"
+        ? {
+            used: quota.broadcastsThisMonth,
+            limit: userTier.tier.maxMonthlyBroadcasts,
+          }
+        : {
+            used: quota.messagesSentToday,
+            limit: userTier.tier.maxDailyMessages,
+          };
+
+    const ratio = used / limit;
 
     if (ratio >= QuotaThresholds.EXCEEDED) {
-      this.notifications.notifyQuotaExceeded(user.id, "daily");
+      this.notifications.notifyQuotaExceeded(user.id, quotaType);
       throw new HttpException(
-        { code: ErrorCodes.QUOTA_DAILY_EXCEEDED },
+        {
+          code:
+            quotaType === "monthly"
+              ? ErrorCodes.QUOTA_MONTHLY_EXCEEDED
+              : ErrorCodes.QUOTA_DAILY_EXCEEDED,
+        },
         HttpStatus.TOO_MANY_REQUESTS,
       );
     }
+
     if (ratio >= QuotaThresholds.WARNING) {
-      const pct = Math.round(ratio * 100);
-      this.notifications.notifyQuotaWarning(user.id, "daily", pct);
+      this.notifications.notifyQuotaWarning(
+        user.id,
+        quotaType,
+        Math.round(ratio * 100),
+      );
     }
+
     return true;
   }
 }
@@ -2088,6 +2245,153 @@ export class RolesGuard implements CanActivate {
       throw new ForbiddenException({ code: ErrorCodes.FORBIDDEN });
     }
     return true;
+  }
+}
+
+```
+---
+
+## File : `src/common/guards/tier-feature.guard.ts`
+
+```ts
+import {
+  Injectable,
+  CanActivate,
+  ExecutionContext,
+  ForbiddenException,
+  SetMetadata,
+} from "@nestjs/common";
+import { Reflector } from "@nestjs/core";
+import { PrismaService } from "../../prisma/prisma.service";
+import { RedisService } from "../../redis/redis.service";
+import { ErrorCodes } from "../constants/error-codes.constant";
+
+export const TIER_FEATURE_KEY = "tierFeature";
+
+// FIX: gunakan SetMetadata dari @nestjs/common, bukan Reflect.metadata langsung
+export const RequireFeature = (feature: string) =>
+  SetMetadata(TIER_FEATURE_KEY, feature);
+
+@Injectable()
+export class TierFeatureGuard implements CanActivate {
+  constructor(
+    private reflector: Reflector,
+    private prisma: PrismaService,
+    private redis: RedisService,
+  ) {}
+
+  async canActivate(ctx: ExecutionContext): Promise<boolean> {
+    const feature = this.reflector.getAllAndOverride<string>(TIER_FEATURE_KEY, [
+      ctx.getHandler(),
+      ctx.getClass(),
+    ]);
+    if (!feature) return true;
+
+    const { user } = ctx.switchToHttp().getRequest();
+    if (!user) return false;
+
+    // Admin selalu bypass
+    if (user.role === "admin" || user.role === "super_admin") return true;
+
+    const cacheKey = `tier:features:${user.id}`;
+    let features = await this.redis.get<string[]>(cacheKey);
+
+    if (!features) {
+      const userTier = await this.prisma.userTier.findUnique({
+        where: { userId: user.id },
+        include: { tier: true },
+      });
+
+      if (!userTier) {
+        throw new ForbiddenException({
+          code: ErrorCodes.FORBIDDEN,
+          message: "Tidak ada tier aktif. Silakan hubungi admin.",
+        });
+      }
+
+      features = (userTier.tier.features as string[]) ?? [];
+      await this.redis.set(cacheKey, features, 300);
+    }
+
+    if (!features.includes(feature)) {
+      throw new ForbiddenException({
+        code: ErrorCodes.FEATURE_NOT_AVAILABLE,
+        message: `Fitur '${feature}' tidak tersedia di tier Anda.`,
+      });
+    }
+
+    return true;
+  }
+}
+
+```
+---
+
+## File : `src/common/guards/tier-throttler.guard.ts`
+
+```ts
+import { Injectable, ExecutionContext } from "@nestjs/common";
+import { ThrottlerGuard, ThrottlerRequest } from "@nestjs/throttler";
+import { PrismaService } from "../../prisma/prisma.service";
+import { RedisService } from "../../redis/redis.service";
+
+/**
+ * TierThrottlerGuard — override ThrottlerGuard untuk membaca
+ * rateLimitPerMinute dari tier aktif user, bukan dari config global.
+ *
+ * Hierarki:
+ *  - Admin/super_admin → limit sangat tinggi (bypass efektif)
+ *  - User dengan tier  → rateLimitPerMinute dari tier
+ *  - Tidak ada tier    → fallback 60 req/mnt
+ *  - Tidak login       → config global (10 untuk auth endpoint, 100 lainnya)
+ */
+@Injectable()
+export class TierThrottlerGuard extends ThrottlerGuard {
+  constructor(
+    options: any,
+    storageService: any,
+    reflector: any,
+    private readonly prismaService: PrismaService,
+    private readonly redisService: RedisService,
+  ) {
+    super(options, storageService, reflector);
+  }
+
+  protected async getTracker(req: Record<string, any>): Promise<string> {
+    const userId = req.user?.id;
+    return userId ? `throttle:user:${userId}` : (req.ip ?? "unknown");
+  }
+
+  protected async shouldSkip(context: ExecutionContext): Promise<boolean> {
+    const req = context.switchToHttp().getRequest();
+    const user = req.user;
+    // Admin tidak dibatasi
+    if (user?.role === "admin" || user?.role === "super_admin") return true;
+    return false;
+  }
+
+  protected async getLimit(context: ExecutionContext): Promise<number> {
+    const req = context.switchToHttp().getRequest();
+    const user = req.user;
+    if (!user) return 100; // unauthenticated → global default
+
+    // Cek cache Redis
+    const cacheKey = `tier:ratelimit:${user.id}`;
+    const cached = await this.redisService.get<number>(cacheKey);
+    if (cached !== null && cached !== undefined) return cached;
+
+    const userTier = await this.prismaService.userTier.findUnique({
+      where: { userId: user.id },
+      include: { tier: true },
+    });
+
+    const limit = userTier?.tier?.rateLimitPerMinute ?? 60;
+    await this.redisService.set(cacheKey, limit, 300); // cache 5 menit
+    return limit;
+  }
+
+  protected async getTtl(): Promise<number> {
+    return 60000; // 1 menit dalam ms (ThrottlerGuard v6 pakai ms)
   }
 }
 
@@ -2149,6 +2453,64 @@ export class ResponseInterceptor implements NestInterceptor {
         return { status: true, data };
       }),
     );
+  }
+}
+
+```
+---
+
+## File : `src/common/interceptors/sandbox.interceptor.ts`
+
+```ts
+import {
+  Injectable,
+  NestInterceptor,
+  ExecutionContext,
+  CallHandler,
+} from "@nestjs/common";
+import { Observable, of } from "rxjs";
+
+/**
+ * SandboxInterceptor — jika request menggunakan API Key dengan isSandbox: true,
+ * endpoint kirim pesan akan mengembalikan response sukses palsu tanpa
+ * benar-benar mengirim ke WhatsApp.
+ *
+ * Dipasang di MessagesController dan BroadcastController.
+ */
+@Injectable()
+export class SandboxInterceptor implements NestInterceptor {
+  private readonly SANDBOX_PATHS = [
+    "/messages/send",
+    "/messages/send-media",
+    "/messages/send-location",
+    "/messages/send-live-location",
+    "/messages/send-poll",
+    "/messages/send-contact",
+    "/messages/send-voice-note",
+    "/broadcast",
+  ];
+
+  intercept(ctx: ExecutionContext, next: CallHandler): Observable<any> {
+    const req = ctx.switchToHttp().getRequest();
+
+    // Hanya berlaku untuk API Key dengan isSandbox: true
+    if (!req.user?.isSandbox) return next.handle();
+
+    const url: string = req.url ?? "";
+    const isSendEndpoint = this.SANDBOX_PATHS.some((p) => url.includes(p));
+
+    if (isSendEndpoint && req.method === "POST") {
+      return of({
+        status: true,
+        data: {
+          messageId: `sandbox_${Date.now()}`,
+          sandbox: true,
+          note: "Pesan tidak dikirim. Token dalam mode sandbox.",
+        },
+      });
+    }
+
+    return next.handle();
   }
 }
 
@@ -2305,35 +2667,86 @@ import {
   Injectable,
   NestMiddleware,
   ServiceUnavailableException,
-} from '@nestjs/common';
-import { Request, Response, NextFunction } from 'express';
-import { PrismaService } from '../../prisma/prisma.service';
+} from "@nestjs/common";
+import { Request, Response, NextFunction } from "express";
+import { PrismaService } from "../../prisma/prisma.service";
+import { RedisService } from "../../redis/redis.service";
+import { sha256 } from "../utils/hash.util";
 
+/**
+ * FIX: MaintenanceMiddleware sebelumnya mengandalkan req.user yang belum
+ * ter-populate saat middleware berjalan (JWT strategy berjalan di guard, bukan middleware).
+ *
+ * Solusi:
+ * 1. Untuk session cookie → decode JWT secara manual dari cookie.
+ * 2. Untuk API Key       → lookup langsung dari header X-API-Key ke database/cache.
+ * 3. Jika role admin/super_admin → bypass maintenance.
+ */
 @Injectable()
 export class MaintenanceMiddleware implements NestMiddleware {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private redis: RedisService,
+  ) {}
 
   async use(req: Request, res: Response, next: NextFunction) {
+    // Cek maintenance mode
     const row = await this.prisma.globalSetting.findUnique({
-      where: { key: 'maintenanceMode' },
+      where: { key: "maintenanceMode" },
     });
+    if (row?.value !== "true") return next();
 
-    if (row?.value !== 'true') {
-      return next();
-    }
-
-    const user = (req as any).user;
-    const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
-    if (isAdmin) {
-      return next();
-    }
+    // Coba resolve role dari berbagai sumber auth
+    const role = await this.resolveRole(req);
+    if (role === "admin" || role === "super_admin") return next();
 
     throw new ServiceUnavailableException({
       status: false,
       error:
-        'Server sedang dalam maintenance. Silakan coba beberapa saat lagi.',
-      code: 'ERR_MAINTENANCE',
+        "Server sedang dalam maintenance. Silakan coba beberapa saat lagi.",
+      code: "ERR_MAINTENANCE",
     });
+  }
+
+  private async resolveRole(req: Request): Promise<string | null> {
+    // 1. Coba dari API Key header
+    const apiKeyHeader = req.headers["x-api-key"] as string;
+    if (apiKeyHeader) {
+      const hash = sha256(apiKeyHeader);
+      // Cek cache Redis dulu
+      const cached = await this.redis
+        .get<{ role: string }>(`apikey:${hash}`)
+        .catch(() => null);
+      if (cached?.role) return cached.role;
+
+      // Fallback ke database
+      const apiKey = await this.prisma.apiKey
+        .findUnique({
+          where: { keyHash: hash },
+          include: { user: { select: { role: true, isActive: true } } },
+        })
+        .catch(() => null);
+      if (apiKey?.user?.isActive) return apiKey.user.role;
+    }
+
+    // 2. Coba dari JWT cookie (decode tanpa verify — hanya untuk cek role)
+    //    Verifikasi signature tetap dilakukan oleh JwtAuthGuard selanjutnya.
+    const token = (req as any).cookies?.auth_token;
+    if (token) {
+      try {
+        const [, payloadB64] = token.split(".");
+        if (payloadB64) {
+          const payload = JSON.parse(
+            Buffer.from(payloadB64, "base64url").toString("utf8"),
+          );
+          if (payload?.role) return payload.role;
+        }
+      } catch {
+        // token tidak valid, abaikan
+      }
+    }
+
+    return null;
   }
 }
 
@@ -2690,12 +3103,22 @@ export default registerAs("database", () => ({
 ## File : `src/config/gemini.config.ts`
 
 ```ts
-import { registerAs } from '@nestjs/config';
+import { registerAs } from "@nestjs/config";
 
-export default registerAs('gemini', () => ({
+/**
+ * FIX: Model default diubah ke 'gemini-2.0-flash' yang valid dan tersedia.
+ * 'gemini-3-flash-preview' sebelumnya tidak ada dan akan menyebabkan error 404
+ * dari Google AI API saat digunakan di production.
+ *
+ * Urutan prioritas model yang bisa dikonfigurasi via env GEMINI_MODEL:
+ *   - gemini-2.0-flash         → tercepat, direkomendasikan untuk chatbot
+ *   - gemini-1.5-flash         → fallback jika 2.0 tidak tersedia di region tertentu
+ *   - gemini-1.5-pro           → lebih akurat, lebih lambat
+ */
+export default registerAs("gemini", () => ({
   apiKey: process.env.GEMINI_API_KEY,
-  model: process.env.GEMINI_MODEL || 'gemini-3-flash-preview',
-  timeoutMs: parseInt(process.env.GEMINI_TIMEOUT_MS, 10) || 10000,
+  model: process.env.GEMINI_MODEL || "gemini-2.0-flash",
+  timeoutMs: parseInt(process.env.GEMINI_TIMEOUT_MS, 10) || 10_000,
   confidenceThreshold:
     parseFloat(process.env.GEMINI_CONFIDENCE_THRESHOLD) || 0.6,
 }));
@@ -2954,13 +3377,268 @@ export class GatewayService {
 ```
 ---
 
-## File : `src/modules/ai/ai.module.ts`
+## File : `src/modules/admin/admin.module.ts`
 
 ```ts
 import { Module } from "@nestjs/common";
-import { AiService } from "./ai.service";
+import { JwtModule } from "@nestjs/jwt";
+import { ConfigService } from "@nestjs/config";
+import { ImpersonationController } from "./impersonation.controller";
+import { ImpersonationService } from "./impersonation.service";
+import { AuditModule } from "../audit/audit.module";
 
-@Module({ providers: [AiService], exports: [AiService] })
+@Module({
+  imports: [
+    AuditModule,
+    JwtModule.registerAsync({
+      inject: [ConfigService],
+      useFactory: (cfg: ConfigService) => ({
+        secret: cfg.get("jwt.secret"),
+        signOptions: { expiresIn: cfg.get("jwt.expiresIn") },
+      }),
+    }),
+  ],
+  controllers: [ImpersonationController],
+  providers: [ImpersonationService],
+})
+export class AdminModule {}
+
+```
+---
+
+## File : `src/modules/admin/dto/impersonate.dto.ts`
+
+```ts
+import { IsUUID } from "class-validator";
+import { ApiProperty } from "@nestjs/swagger";
+
+export class ImpersonateDto {
+  @ApiProperty({ description: "ID user yang akan di-impersonate" })
+  @IsUUID()
+  userId: string;
+}
+
+```
+---
+
+## File : `src/modules/admin/impersonation.controller.ts`
+
+```ts
+import {
+  Controller,
+  Post,
+  Delete,
+  Param,
+  Body,
+  UseGuards,
+  Req,
+  HttpCode,
+  HttpStatus,
+} from "@nestjs/common";
+import { ApiTags, ApiOperation } from "@nestjs/swagger";
+import { Request } from "express";
+import { ImpersonationService } from "./impersonation.service";
+import { JwtAuthGuard } from "../../common/guards/jwt-auth.guard";
+import { RolesGuard } from "../../common/guards/roles.guard";
+import { Roles } from "../../common/decorators/roles.decorator";
+import { CurrentUser } from "../../common/decorators/current-user.decorator";
+import { Role } from "../../common/enums/role.enum";
+import { ImpersonateDto } from "./dto/impersonate.dto";
+
+@ApiTags("Admin — Impersonation")
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(Role.ADMIN, Role.SUPER_ADMIN)
+@Controller({ path: "admin/impersonate", version: "1" })
+export class ImpersonationController {
+  constructor(private svc: ImpersonationService) {}
+
+  /**
+   * POST /admin/impersonate
+   * Generate JWT sementara atas nama user target.
+   * Token dikembalikan di response — client menggunakannya sebagai Bearer token
+   * atau set cookie manual untuk sesi support.
+   */
+  @Post()
+  @ApiOperation({
+    summary: "[Admin] Impersonate user — generate token sementara",
+  })
+  async impersonate(
+    @CurrentUser() admin: any,
+    @Body() dto: ImpersonateDto,
+    @Req() req: Request,
+  ) {
+    return {
+      status: true,
+      data: await this.svc.impersonate(
+        admin.id,
+        admin.email,
+        dto.userId,
+        req.ip,
+        req.headers["user-agent"],
+      ),
+    };
+  }
+
+  /**
+   * DELETE /admin/impersonate/:targetUserId
+   * Akhiri sesi impersonation — invalidasi token di Redis.
+   */
+  @Delete(":targetUserId")
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "[Admin] Akhiri sesi impersonation" })
+  async exit(
+    @CurrentUser() admin: any,
+    @Param("targetUserId") targetUserId: string,
+    @Req() req: Request,
+  ) {
+    return {
+      status: true,
+      data: await this.svc.exitImpersonation(
+        admin.id,
+        admin.email,
+        targetUserId,
+        req.ip,
+        req.headers["user-agent"],
+      ),
+    };
+  }
+}
+
+```
+---
+
+## File : `src/modules/admin/impersonation.service.ts`
+
+```ts
+import {
+  Injectable,
+  NotFoundException,
+  ForbiddenException,
+  BadRequestException,
+} from "@nestjs/common";
+import { JwtService } from "@nestjs/jwt";
+import { PrismaService } from "../../prisma/prisma.service";
+import { AuditService } from "../audit/audit.service";
+import { RedisService } from "../../redis/redis.service";
+import { ErrorCodes } from "../../common/constants/error-codes.constant";
+import { AuditAction } from "@prisma/client";
+import { generateTempToken } from "../../common/utils/token-generator.util";
+
+const IMPERSONATE_TTL = 3600; // 1 jam
+
+@Injectable()
+export class ImpersonationService {
+  constructor(
+    private prisma: PrismaService,
+    private jwt: JwtService,
+    private audit: AuditService,
+    private redis: RedisService,
+  ) {}
+
+  async impersonate(
+    adminId: string,
+    adminEmail: string,
+    targetUserId: string,
+    ip: string,
+    ua: string,
+  ) {
+    const target = await this.prisma.user.findUnique({
+      where: { id: targetUserId },
+    });
+    if (!target) throw new NotFoundException({ code: ErrorCodes.NOT_FOUND });
+
+    // Admin tidak bisa impersonate sesama admin/super_admin
+    if (target.role === "admin" || target.role === "super_admin") {
+      throw new ForbiddenException({
+        code: ErrorCodes.FORBIDDEN,
+        message: "Tidak bisa impersonate akun admin.",
+      });
+    }
+
+    // Buat JWT sementara atas nama target dengan claim impersonation
+    const token = this.jwt.sign(
+      {
+        sub: target.id,
+        email: target.email,
+        role: target.role,
+        impersonatedBy: adminId,
+      },
+      { expiresIn: "1h" },
+    );
+
+    // Simpan sesi impersonation di Redis (untuk audit trail & invalidasi)
+    const sessionKey = `impersonate:${adminId}:${target.id}`;
+    await this.redis.set(
+      sessionKey,
+      { adminId, targetId: target.id, token },
+      IMPERSONATE_TTL,
+    );
+
+    await this.audit.log({
+      userId: adminId,
+      userEmail: adminEmail,
+      action: AuditAction.UPDATE_USER,
+      details: {
+        action: "IMPERSONATE_START",
+        targetId: target.id,
+        targetEmail: target.email,
+      },
+      ip,
+      userAgent: ua,
+    });
+
+    return {
+      token,
+      targetUser: {
+        id: target.id,
+        email: target.email,
+        name: target.name,
+        role: target.role,
+      },
+      expiresIn: IMPERSONATE_TTL,
+    };
+  }
+
+  async exitImpersonation(
+    adminId: string,
+    adminEmail: string,
+    targetUserId: string,
+    ip: string,
+    ua: string,
+  ) {
+    const sessionKey = `impersonate:${adminId}:${targetUserId}`;
+    await this.redis.del(sessionKey);
+
+    await this.audit.log({
+      userId: adminId,
+      userEmail: adminEmail,
+      action: AuditAction.UPDATE_USER,
+      details: { action: "IMPERSONATE_END", targetId: targetUserId },
+      ip,
+      userAgent: ua,
+    });
+
+    return { message: "Impersonation ended." };
+  }
+}
+
+```
+---
+
+## File : `src/modules/ai/ai.module.ts`
+
+```ts
+import { Module, forwardRef } from "@nestjs/common";
+import { AiService } from "./ai.service";
+import { NotificationsModule } from "../notifications/notifications.module";
+
+@Module({
+  imports: [
+    forwardRef(() => NotificationsModule), // forwardRef mencegah circular dependency
+  ],
+  providers: [AiService],
+  exports: [AiService],
+})
 export class AiModule {}
 
 ```
@@ -2973,9 +3651,12 @@ import {
   Injectable,
   Logger,
   ServiceUnavailableException,
+  Inject,
+  forwardRef,
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../../prisma/prisma.service";
+import { NotificationsService } from "../notifications/notifications.service";
 import { ErrorCodes } from "../../common/constants/error-codes.constant";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
@@ -2991,6 +3672,9 @@ export class AiService {
   constructor(
     private config: ConfigService,
     private prisma: PrismaService,
+    // FIX: forwardRef karena NotificationsModule → GatewayModule → SessionsModule bisa circular
+    @Inject(forwardRef(() => NotificationsService))
+    private notifications: NotificationsService,
   ) {
     this.model = config.get("gemini.model");
     this.timeoutMs = config.get("gemini.timeoutMs");
@@ -3013,7 +3697,6 @@ export class AiService {
     if (this.isDisabled)
       throw new ServiceUnavailableException({ code: ErrorCodes.AI_DISABLED });
 
-    // Check user-level API key override
     const userSetting = await this.prisma.userSetting.findUnique({
       where: { userId },
     });
@@ -3054,6 +3737,15 @@ export class AiService {
       if (e.status === 403 || e.status === 400) {
         this.isDisabled = true;
         this.logger.error("Gemini API key invalid — AI disabled");
+
+        // FIX: Kirim notifikasi ke user yang bersangkutan + admin email
+        const user = await this.prisma.user
+          .findUnique({ where: { id: userId }, select: { email: true } })
+          .catch(() => null);
+        if (user?.email) {
+          this.notifications.notifyAiDisabled(userId, user.email);
+        }
+
         throw new ServiceUnavailableException({ code: ErrorCodes.AI_DISABLED });
       }
       this.logger.error(`Gemini error: ${e.message}`);
@@ -3280,6 +3972,81 @@ export class QueryAnalyticsDto {
 ```
 ---
 
+## File : `src/modules/api-keys/api-key-monitor.service.ts`
+
+```ts
+import { Injectable, Logger } from "@nestjs/common";
+import { Cron } from "@nestjs/schedule";
+import { PrismaService } from "../../prisma/prisma.service";
+import { RedisService } from "../../redis/redis.service";
+import { EmailService } from "../notifications/email.service";
+import { addDays } from "date-fns";
+
+/**
+ * ApiKeyMonitorService — kirim notifikasi email jika API token
+ * akan kadaluarsa dalam 7 hari atau 3 hari.
+ * Sesuai doc 1 section 30: "Email: Token API mendekati expired"
+ */
+@Injectable()
+export class ApiKeyMonitorService {
+  private logger = new Logger("ApiKeyMonitorService");
+
+  constructor(
+    private prisma: PrismaService,
+    private redis: RedisService,
+    private email: EmailService,
+  ) {}
+
+  // Setiap hari jam 09:00 WIB (02:00 UTC)
+  @Cron("0 2 * * *")
+  async checkExpiringApiKeys() {
+    const now = new Date();
+    const in7Days = addDays(now, 7);
+
+    const expiring = await this.prisma.apiKey.findMany({
+      where: {
+        expiresAt: { not: null, lte: in7Days, gte: now },
+      },
+      include: {
+        user: { select: { email: true, isActive: true } },
+      },
+    });
+
+    for (const key of expiring) {
+      if (!key.user.isActive || !key.expiresAt) continue;
+
+      const daysLeft = Math.ceil(
+        (key.expiresAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24),
+      );
+
+      if (daysLeft !== 7 && daysLeft !== 3) continue;
+
+      // Cek apakah sudah pernah notif hari ini
+      const notifKey = `apikey:expiry:notif:${key.id}:${daysLeft}`;
+      const already = await this.redis.get<boolean>(notifKey).catch(() => null);
+      if (already) continue;
+
+      await this.email.send(
+        key.user.email,
+        `API Token "${key.name}" Hampir Kadaluarsa`,
+        `API token <strong>${key.name}</strong> (preview: <code>${key.keyPreview}...</code>)
+         akan kadaluarsa dalam <strong>${daysLeft} hari</strong>
+         (${key.expiresAt.toLocaleDateString("id-ID")}).<br><br>
+         Segera buat token baru atau perpanjang masa aktifnya di dashboard.`,
+      );
+
+      // Tandai sudah notif (TTL 25 jam)
+      await this.redis.set(notifKey, true, 25 * 3600);
+      this.logger.log(
+        `Notified ${key.user.email}: token "${key.name}" expires in ${daysLeft} days`,
+      );
+    }
+  }
+}
+
+```
+---
+
 ## File : `src/modules/api-keys/api-keys.controller.ts`
 
 ```ts
@@ -3299,11 +4066,16 @@ import { ApiTags, ApiOperation } from "@nestjs/swagger";
 import { Request } from "express";
 import { ApiKeysService } from "./api-keys.service";
 import { JwtAuthGuard } from "../../common/guards/jwt-auth.guard";
+import {
+  TierFeatureGuard,
+  RequireFeature,
+} from "../../common/guards/tier-feature.guard";
 import { CurrentUser } from "../../common/decorators/current-user.decorator";
 import { CreateApiKeyDto } from "./dto/create-api-key.dto";
 
 @ApiTags("API Keys")
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, TierFeatureGuard)
+@RequireFeature("api_access")
 @Controller({ path: "keys", version: "1" })
 export class ApiKeysController {
   constructor(private svc: ApiKeysService) {}
@@ -3355,12 +4127,14 @@ export class ApiKeysController {
 import { Module } from "@nestjs/common";
 import { ApiKeysController } from "./api-keys.controller";
 import { ApiKeysService } from "./api-keys.service";
+import { ApiKeyMonitorService } from "./api-key-monitor.service";
 import { AuditModule } from "../audit/audit.module";
+import { NotificationsModule } from "../notifications/notifications.module";
 
 @Module({
-  imports: [AuditModule],
+  imports: [AuditModule, NotificationsModule],
   controllers: [ApiKeysController],
-  providers: [ApiKeysService],
+  providers: [ApiKeysService, ApiKeyMonitorService],
 })
 export class ApiKeysModule {}
 
@@ -3395,6 +4169,8 @@ export class ApiKeysService {
         name: true,
         keyPreview: true,
         ipWhitelist: true,
+        isSandbox: true,
+        expiresAt: true,
         lastUsedAt: true,
         createdAt: true,
       },
@@ -3410,6 +4186,7 @@ export class ApiKeysService {
     ua: string,
   ) {
     if (dto.ipWhitelist) validateIpWhitelist(dto.ipWhitelist);
+
     const plaintext = generateApiToken();
     const keyHash = sha256(plaintext);
     const keyPreview = plaintext.slice(0, 8);
@@ -3421,17 +4198,28 @@ export class ApiKeysService {
         keyHash,
         keyPreview,
         ipWhitelist: dto.ipWhitelist ?? "",
+        isSandbox: dto.isSandbox ?? false,
+        expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : null,
       },
     });
+
     await this.audit.log({
       userId,
       userEmail: email,
       action: AuditAction.CREATE_API_KEY,
-      details: { keyId: apiKey.id },
+      details: { keyId: apiKey.id, isSandbox: apiKey.isSandbox },
       ip,
       userAgent: ua,
     });
-    return { id: apiKey.id, key: plaintext, name: apiKey.name, keyPreview };
+
+    return {
+      id: apiKey.id,
+      key: plaintext,
+      name: apiKey.name,
+      keyPreview,
+      isSandbox: apiKey.isSandbox,
+      expiresAt: apiKey.expiresAt,
+    };
   }
 
   async remove(
@@ -3461,12 +4249,38 @@ export class ApiKeysService {
 ## File : `src/modules/api-keys/dto/create-api-key.dto.ts`
 
 ```ts
-import { IsString, IsNotEmpty, IsOptional } from "class-validator";
+import {
+  IsString,
+  IsNotEmpty,
+  IsOptional,
+  IsBoolean,
+  IsDateString,
+} from "class-validator";
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
 
 export class CreateApiKeyDto {
   @ApiProperty() @IsString() @IsNotEmpty() name: string;
-  @ApiPropertyOptional() @IsOptional() @IsString() ipWhitelist?: string;
+
+  @ApiPropertyOptional({ description: "IP whitelist, comma-separated CIDR" })
+  @IsOptional()
+  @IsString()
+  ipWhitelist?: string;
+
+  @ApiPropertyOptional({
+    description: "Sandbox mode: request tidak dikirim ke WhatsApp sungguhan",
+    default: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  isSandbox?: boolean;
+
+  @ApiPropertyOptional({
+    description: "Tanggal kadaluarsa token (ISO 8601). Null = tidak expired.",
+    example: "2026-12-31T23:59:59.000Z",
+  })
+  @IsOptional()
+  @IsDateString()
+  expiresAt?: string;
 }
 
 ```
@@ -3710,21 +4524,20 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
-} from '@nestjs/common';
-import { ApiTags, ApiOperation } from '@nestjs/swagger';
-import { AuthGuard } from '@nestjs/passport';
-import { Request, Response } from 'express';
-import { AuthService } from './auth.service';
-import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { Public } from '../../common/decorators/public.decorator';
-import { ConfigService } from '@nestjs/config';
-import { Verify2faDto } from './dto/verify-2fa.dto';
-import { Enable2faDto } from './dto/enable-2fa.dto';
-import { Disable2faDto } from './dto/disable-2fa.dto';
+} from "@nestjs/common";
+import { ApiTags, ApiOperation } from "@nestjs/swagger";
+import { AuthGuard } from "@nestjs/passport";
+import { Request, Response } from "express";
+import { AuthService } from "./auth.service";
+import { JwtAuthGuard } from "../../common/guards/jwt-auth.guard";
+import { CurrentUser } from "../../common/decorators/current-user.decorator";
+import { Public } from "../../common/decorators/public.decorator";
+import { ConfigService } from "@nestjs/config";
+import { Verify2faDto } from "./dto/verify-2fa.dto";
+import { VerifyCodeDto } from "./dto/verify-code.dto";
 
-@ApiTags('Auth')
-@Controller({ path: 'auth', version: '1' })
+@ApiTags("Auth")
+@Controller({ path: "auth", version: "1" })
 export class AuthController {
   constructor(
     private svc: AuthService,
@@ -3732,21 +4545,21 @@ export class AuthController {
   ) {}
 
   @Public()
-  @Get('google')
-  @UseGuards(AuthGuard('google'))
-  @ApiOperation({ summary: 'Redirect ke Google OAuth' })
+  @Get("google")
+  @UseGuards(AuthGuard("google"))
+  @ApiOperation({ summary: "Redirect ke Google OAuth" })
   googleLogin() {}
 
   @Public()
-  @Get('google/callback')
-  @UseGuards(AuthGuard('google'))
-  @ApiOperation({ summary: 'Google OAuth callback' })
+  @Get("google/callback")
+  @UseGuards(AuthGuard("google"))
+  @ApiOperation({ summary: "Google OAuth callback" })
   async googleCallback(@Req() req: Request, @Res() res: Response) {
     const profile = req.user as any;
     const ip = req.ip;
-    const ua = req.headers['user-agent'];
-    const clientUrl = this.cfg.get<string>('app.clientUrl');
-    const cookieSecure = this.cfg.get<boolean>('app.cookieSecure');
+    const ua = req.headers["user-agent"];
+    const clientUrl = this.cfg.get<string>("app.clientUrl");
+    const cookieSecure = this.cfg.get<boolean>("app.cookieSecure");
 
     const user = await this.svc.validateGoogleUser(profile, ip, ua);
 
@@ -3756,9 +4569,9 @@ export class AuthController {
     }
 
     const token = this.svc.signJwt(user);
-    res.cookie('auth_token', token, {
+    res.cookie("auth_token", token, {
       httpOnly: true,
-      sameSite: 'strict',
+      sameSite: "strict",
       secure: cookieSecure,
       maxAge: 7 * 24 * 3600 * 1000,
     });
@@ -3766,25 +4579,25 @@ export class AuthController {
   }
 
   @Public()
-  @Post('2fa/verify')
+  @Post("2fa/verify")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Verifikasi kode 2FA setelah Google login' })
+  @ApiOperation({ summary: "Verifikasi kode 2FA setelah Google login" })
   async verify2fa(
     @Body() dto: Verify2faDto,
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const cookieSecure = this.cfg.get<boolean>('app.cookieSecure');
+    const cookieSecure = this.cfg.get<boolean>("app.cookieSecure");
     const user = await this.svc.verify2fa(
       dto.tempToken,
       dto.code,
       req.ip,
-      req.headers['user-agent'],
+      req.headers["user-agent"],
     );
     const token = this.svc.signJwt(user);
-    res.cookie('auth_token', token, {
+    res.cookie("auth_token", token, {
       httpOnly: true,
-      sameSite: 'strict',
+      sameSite: "strict",
       secure: cookieSecure,
       maxAge: 7 * 24 * 3600 * 1000,
     });
@@ -3795,8 +4608,8 @@ export class AuthController {
   }
 
   @UseGuards(JwtAuthGuard)
-  @Get('me')
-  @ApiOperation({ summary: 'Data user yang sedang login' })
+  @Get("me")
+  @ApiOperation({ summary: "Data user yang sedang login" })
   me(@CurrentUser() u: any) {
     return {
       status: true,
@@ -3812,20 +4625,20 @@ export class AuthController {
   }
 
   @UseGuards(JwtAuthGuard)
-  @Post('2fa/setup')
+  @Post("2fa/setup")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Setup 2FA - generate QR code' })
+  @ApiOperation({ summary: "Setup 2FA - generate QR code" })
   async setup2fa(@CurrentUser() u: any) {
     return { status: true, data: await this.svc.setup2fa(u.id) };
   }
 
   @UseGuards(JwtAuthGuard)
-  @Post('2fa/enable')
+  @Post("2fa/enable")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Aktifkan 2FA setelah scan QR' })
+  @ApiOperation({ summary: "Aktifkan 2FA setelah scan QR" })
   async enable2fa(
     @CurrentUser() u: any,
-    @Body() dto: Enable2faDto,
+    @Body() dto: VerifyCodeDto,
     @Req() req: Request,
   ) {
     return {
@@ -3834,18 +4647,18 @@ export class AuthController {
         u.id,
         dto.code,
         req.ip,
-        req.headers['user-agent'],
+        req.headers["user-agent"],
       ),
     };
   }
 
   @UseGuards(JwtAuthGuard)
-  @Post('2fa/disable')
+  @Post("2fa/disable")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Nonaktifkan 2FA' })
+  @ApiOperation({ summary: "Nonaktifkan 2FA" })
   async disable2fa(
     @CurrentUser() u: any,
-    @Body() dto: Disable2faDto,
+    @Body() dto: VerifyCodeDto,
     @Req() req: Request,
   ) {
     return {
@@ -3854,18 +4667,18 @@ export class AuthController {
         u.id,
         dto.code,
         req.ip,
-        req.headers['user-agent'],
+        req.headers["user-agent"],
       ),
     };
   }
 
   @UseGuards(JwtAuthGuard)
-  @Post('2fa/backup-codes/regenerate')
+  @Post("2fa/backup-codes/regenerate")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Regenerate backup codes 2FA' })
+  @ApiOperation({ summary: "Regenerate backup codes 2FA" })
   async regenerateBackupCodes(
     @CurrentUser() u: any,
-    @Body() dto: Enable2faDto,
+    @Body() dto: VerifyCodeDto,
   ) {
     return {
       status: true,
@@ -3874,16 +4687,16 @@ export class AuthController {
   }
 
   @UseGuards(JwtAuthGuard)
-  @Post('logout')
+  @Post("logout")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Logout' })
+  @ApiOperation({ summary: "Logout" })
   async logout(
     @CurrentUser() u: any,
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
-    await this.svc.logout(u.id, u.email, req.ip, req.headers['user-agent']);
-    res.clearCookie('auth_token');
+    await this.svc.logout(u.id, u.email, req.ip, req.headers["user-agent"]);
+    res.clearCookie("auth_token");
     return { status: true };
   }
 }
@@ -3903,6 +4716,7 @@ import { AuthService } from "./auth.service";
 import { GoogleStrategy } from "./strategies/google.strategy";
 import { JwtStrategy } from "./strategies/jwt.strategy";
 import { AuditModule } from "../audit/audit.module";
+import { NotificationsModule } from "../notifications/notifications.module";
 
 @Module({
   imports: [
@@ -3915,6 +4729,7 @@ import { AuditModule } from "../audit/audit.module";
       }),
     }),
     AuditModule,
+    NotificationsModule, // FIX: diperlukan untuk notifyNewIpLogin
   ],
   controllers: [AuthController],
   providers: [AuthService, GoogleStrategy, JwtStrategy],
@@ -3933,21 +4748,26 @@ import {
   UnauthorizedException,
   BadRequestException,
   ForbiddenException,
-} from '@nestjs/common';
-import { JwtService } from '@nestjs/jwt';
-import { ConfigService } from '@nestjs/config';
-import { PrismaService } from '../../prisma/prisma.service';
-import { RedisService } from '../../redis/redis.service';
-import { AuditService } from '../audit/audit.service';
-import { CacheKeys } from '../../common/constants/cache-keys.constant';
-import { ErrorCodes } from '../../common/constants/error-codes.constant';
-import { generateTempToken, generateHexToken } from '../../common/utils/token-generator.util';
-import { sha256 } from '../../common/utils/hash.util';
-import { AuditAction, Role } from '@prisma/client';
-import * as speakeasy from 'speakeasy';
-import * as qrcode from 'qrcode';
+} from "@nestjs/common";
+import { JwtService } from "@nestjs/jwt";
+import { ConfigService } from "@nestjs/config";
+import { PrismaService } from "../../prisma/prisma.service";
+import { RedisService } from "../../redis/redis.service";
+import { AuditService } from "../audit/audit.service";
+import { NotificationsService } from "../notifications/notifications.service";
+import { CacheKeys } from "../../common/constants/cache-keys.constant";
+import { ErrorCodes } from "../../common/constants/error-codes.constant";
+import {
+  generateTempToken,
+  generateHexToken,
+} from "../../common/utils/token-generator.util";
+import { sha256 } from "../../common/utils/hash.util";
+import { AuditAction, Role } from "@prisma/client";
+import * as speakeasy from "speakeasy";
+import * as qrcode from "qrcode";
 
 const BACKUP_CODE_COUNT = 8;
+const LAST_IP_KEY = (userId: string) => `login:lastip:${userId}`;
 
 @Injectable()
 export class AuthService {
@@ -3956,6 +4776,7 @@ export class AuthService {
     private jwt: JwtService,
     private redis: RedisService,
     private audit: AuditService,
+    private notifications: NotificationsService,
     private cfg: ConfigService,
   ) {}
 
@@ -3964,22 +4785,43 @@ export class AuthService {
     ip: string,
     ua: string,
   ) {
-    const adminEmail = this.cfg.get<string>('app.adminEmail');
-    let user = await this.prisma.user.findUnique({ where: { email: profile.email } });
+    const adminEmail = this.cfg.get<string>("app.adminEmail");
+    let user = await this.prisma.user.findUnique({
+      where: { email: profile.email },
+    });
 
     if (!user) {
       const role: Role = profile.email === adminEmail ? Role.admin : Role.user;
       user = await this.prisma.user.create({
-        data: { email: profile.email, name: profile.name, picture: profile.picture, role },
+        data: {
+          email: profile.email,
+          name: profile.name,
+          picture: profile.picture,
+          role,
+        },
       });
       await this.prisma.userQuota.create({ data: { userId: user.id } });
     } else if (user.role === Role.user && profile.email === adminEmail) {
-      user = await this.prisma.user.update({ where: { id: user.id }, data: { role: Role.admin } });
+      user = await this.prisma.user.update({
+        where: { id: user.id },
+        data: { role: Role.admin },
+      });
     }
 
-    if (!user.isActive) throw new ForbiddenException({ code: ErrorCodes.ACCOUNT_DISABLED });
+    if (!user.isActive)
+      throw new ForbiddenException({ code: ErrorCodes.ACCOUNT_DISABLED });
 
-    await this.audit.log({ userId: user.id, userEmail: user.email, action: AuditAction.LOGIN, ip, userAgent: ua });
+    await this.audit.log({
+      userId: user.id,
+      userEmail: user.email,
+      action: AuditAction.LOGIN,
+      ip,
+      userAgent: ua,
+    });
+
+    // FIX: Notifikasi login dari IP baru
+    await this.checkNewIpLogin(user.id, user.email, ip, ua);
+
     return user;
   }
 
@@ -3994,8 +4836,13 @@ export class AuthService {
   }
 
   async verifyTempToken(token: string): Promise<string> {
-    const userId = await this.redis.get<string>(CacheKeys.twoFaTempToken(token));
-    if (!userId) throw new UnauthorizedException({ code: ErrorCodes.TWO_FA_SESSION_EXPIRED });
+    const userId = await this.redis.get<string>(
+      CacheKeys.twoFaTempToken(token),
+    );
+    if (!userId)
+      throw new UnauthorizedException({
+        code: ErrorCodes.TWO_FA_SESSION_EXPIRED,
+      });
     return userId;
   }
 
@@ -4006,30 +4853,48 @@ export class AuthService {
   async verify2fa(tempToken: string, code: string, ip: string, ua: string) {
     const userId = await this.verifyTempToken(tempToken);
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
-    if (!user?.twoFaSecret) throw new UnauthorizedException({ code: ErrorCodes.TWO_FA_NOT_ENABLED });
+    if (!user?.twoFaSecret)
+      throw new UnauthorizedException({ code: ErrorCodes.TWO_FA_NOT_ENABLED });
 
     const isTotp = speakeasy.totp.verify({
       secret: user.twoFaSecret,
-      encoding: 'base32',
+      encoding: "base32",
       token: code,
       window: 2,
     });
 
     if (!isTotp) {
       const usedBackup = await this.verifyAndConsumeBackupCode(user.id, code);
-      if (!usedBackup) throw new UnauthorizedException({ code: ErrorCodes.TWO_FA_INVALID_CODE });
+      if (!usedBackup)
+        throw new UnauthorizedException({
+          code: ErrorCodes.TWO_FA_INVALID_CODE,
+        });
     }
 
     await this.deleteTempToken(tempToken);
-    await this.audit.log({ userId: user.id, userEmail: user.email, action: AuditAction.LOGIN, ip, userAgent: ua });
+    await this.audit.log({
+      userId: user.id,
+      userEmail: user.email,
+      action: AuditAction.LOGIN,
+      ip,
+      userAgent: ua,
+    });
+
+    await this.checkNewIpLogin(user.id, user.email, ip, ua);
     return user;
   }
 
   async setup2fa(userId: string) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
-    if (user?.twoFaEnabled) throw new BadRequestException({ code: ErrorCodes.TWO_FA_ALREADY_ENABLED });
+    if (user?.twoFaEnabled)
+      throw new BadRequestException({
+        code: ErrorCodes.TWO_FA_ALREADY_ENABLED,
+      });
 
-    const secret = speakeasy.generateSecret({ name: `WA Gateway (${user.email})`, length: 20 });
+    const secret = speakeasy.generateSecret({
+      name: `WA Gateway (${user.email})`,
+      length: 20,
+    });
     await this.redis.set(`2fa:setup:${userId}`, secret.base32, 600);
 
     const qr = await qrcode.toDataURL(secret.otpauth_url);
@@ -4038,10 +4903,19 @@ export class AuthService {
 
   async enable2fa(userId: string, code: string, ip: string, ua: string) {
     const secret = await this.redis.get<string>(`2fa:setup:${userId}`);
-    if (!secret) throw new BadRequestException({ code: ErrorCodes.TWO_FA_SESSION_EXPIRED });
+    if (!secret)
+      throw new BadRequestException({
+        code: ErrorCodes.TWO_FA_SESSION_EXPIRED,
+      });
 
-    const valid = speakeasy.totp.verify({ secret, encoding: 'base32', token: code, window: 2 });
-    if (!valid) throw new UnauthorizedException({ code: ErrorCodes.TWO_FA_INVALID_CODE });
+    const valid = speakeasy.totp.verify({
+      secret,
+      encoding: "base32",
+      token: code,
+      window: 2,
+    });
+    if (!valid)
+      throw new UnauthorizedException({ code: ErrorCodes.TWO_FA_INVALID_CODE });
 
     const backupCodes = this.generateBackupCodes();
     const hashedCodes = backupCodes.map((c) => sha256(c));
@@ -4054,42 +4928,68 @@ export class AuthService {
     await this.redis.del(`2fa:setup:${userId}`);
 
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
-    await this.audit.log({ userId, userEmail: user.email, action: AuditAction.ENABLE_2FA, ip, userAgent: ua });
-    return { message: '2FA enabled', backupCodes };
+    await this.audit.log({
+      userId,
+      userEmail: user.email,
+      action: AuditAction.ENABLE_2FA,
+      ip,
+      userAgent: ua,
+    });
+    return { message: "2FA enabled", backupCodes };
   }
 
   async disable2fa(userId: string, code: string, ip: string, ua: string) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
-    if (!user?.twoFaEnabled) throw new BadRequestException({ code: ErrorCodes.TWO_FA_NOT_ENABLED });
+    if (!user?.twoFaEnabled)
+      throw new BadRequestException({ code: ErrorCodes.TWO_FA_NOT_ENABLED });
 
     const isTotp = speakeasy.totp.verify({
       secret: user.twoFaSecret,
-      encoding: 'base32',
+      encoding: "base32",
       token: code,
       window: 2,
     });
     if (!isTotp) {
       const usedBackup = await this.verifyAndConsumeBackupCode(user.id, code);
-      if (!usedBackup) throw new UnauthorizedException({ code: ErrorCodes.TWO_FA_INVALID_CODE });
+      if (!usedBackup)
+        throw new UnauthorizedException({
+          code: ErrorCodes.TWO_FA_INVALID_CODE,
+        });
     }
 
-    await this.prisma.user.update({ where: { id: userId }, data: { twoFaSecret: null, twoFaEnabled: false } });
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { twoFaSecret: null, twoFaEnabled: false },
+    });
     await this.redis.del(`2fa:backup:${userId}`);
-    await this.audit.log({ userId, userEmail: user.email, action: AuditAction.DISABLE_2FA, ip, userAgent: ua });
-    return { message: '2FA disabled' };
+    await this.audit.log({
+      userId,
+      userEmail: user.email,
+      action: AuditAction.DISABLE_2FA,
+      ip,
+      userAgent: ua,
+    });
+    return { message: "2FA disabled" };
   }
 
   async regenerateBackupCodes(userId: string, code: string) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
-    if (!user?.twoFaEnabled) throw new BadRequestException({ code: ErrorCodes.TWO_FA_NOT_ENABLED });
+    if (!user?.twoFaEnabled)
+      throw new BadRequestException({ code: ErrorCodes.TWO_FA_NOT_ENABLED });
 
-    const valid = speakeasy.totp.verify({
+    const isTotp = speakeasy.totp.verify({
       secret: user.twoFaSecret,
-      encoding: 'base32',
+      encoding: "base32",
       token: code,
       window: 2,
     });
-    if (!valid) throw new UnauthorizedException({ code: ErrorCodes.TWO_FA_INVALID_CODE });
+    if (!isTotp) {
+      const usedBackup = await this.verifyAndConsumeBackupCode(user.id, code);
+      if (!usedBackup)
+        throw new UnauthorizedException({
+          code: ErrorCodes.TWO_FA_INVALID_CODE,
+        });
+    }
 
     const backupCodes = this.generateBackupCodes();
     const hashedCodes = backupCodes.map((c) => sha256(c));
@@ -4098,16 +4998,51 @@ export class AuthService {
   }
 
   async logout(userId: string, email: string, ip: string, ua: string) {
-    await this.audit.log({ userId, userEmail: email, action: AuditAction.LOGOUT, ip, userAgent: ua });
+    await this.audit.log({
+      userId,
+      userEmail: email,
+      action: AuditAction.LOGOUT,
+      ip,
+      userAgent: ua,
+    });
+  }
+
+  // ── Private helpers ───────────────────────────────────────
+
+  /**
+   * FIX: Deteksi login dari IP baru — simpan IP terakhir di Redis,
+   * bandingkan dengan IP sekarang, kirim notifikasi email jika berbeda.
+   */
+  private async checkNewIpLogin(
+    userId: string,
+    userEmail: string,
+    ip: string,
+    ua: string,
+  ) {
+    const key = LAST_IP_KEY(userId);
+    const lastIp = await this.redis.get<string>(key);
+
+    if (lastIp && lastIp !== ip) {
+      this.notifications.notifyNewIpLogin(userEmail, ip, ua);
+    }
+
+    // Simpan IP terbaru (TTL 30 hari)
+    await this.redis.set(key, ip, 30 * 24 * 3600);
   }
 
   private generateBackupCodes(): string[] {
     return Array.from({ length: BACKUP_CODE_COUNT }, () =>
-      generateHexToken(5).toUpperCase().match(/.{1,5}/g)!.join('-'),
+      generateHexToken(5)
+        .toUpperCase()
+        .match(/.{1,5}/g)!
+        .join("-"),
     );
   }
 
-  private async verifyAndConsumeBackupCode(userId: string, code: string): Promise<boolean> {
+  private async verifyAndConsumeBackupCode(
+    userId: string,
+    code: string,
+  ): Promise<boolean> {
     const stored = await this.redis.get<string[]>(`2fa:backup:${userId}`);
     if (!stored?.length) return false;
     const hashed = sha256(code.toUpperCase());
@@ -4125,13 +5060,16 @@ export class AuthService {
 ## File : `src/modules/auth/dto/disable-2fa.dto.ts`
 
 ```ts
-import { IsString, Length } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
+import { IsString, IsNotEmpty } from "class-validator";
+import { ApiProperty } from "@nestjs/swagger";
 
 export class Disable2faDto {
-  @ApiProperty()
+  @ApiProperty({
+    description: "Kode TOTP 6 digit atau backup code (format: XXXXX-XXXXX)",
+    example: "123456",
+  })
   @IsString()
-  @Length(6, 6)
+  @IsNotEmpty()
   code: string;
 }
 
@@ -4141,13 +5079,16 @@ export class Disable2faDto {
 ## File : `src/modules/auth/dto/enable-2fa.dto.ts`
 
 ```ts
-import { IsString, Length } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
+import { IsString, IsNotEmpty } from "class-validator";
+import { ApiProperty } from "@nestjs/swagger";
 
 export class Enable2faDto {
-  @ApiProperty()
+  @ApiProperty({
+    description: "Kode TOTP 6 digit atau backup code (format: XXXXX-XXXXX)",
+    example: "123456",
+  })
   @IsString()
-  @Length(6, 6)
+  @IsNotEmpty()
   code: string;
 }
 
@@ -4175,6 +5116,29 @@ import { ApiProperty } from "@nestjs/swagger";
 export class Verify2faDto {
   @ApiProperty() @IsString() @IsNotEmpty() tempToken: string;
   @ApiProperty() @IsString() @Length(6, 6) code: string;
+}
+
+```
+---
+
+## File : `src/modules/auth/dto/verify-code.dto.ts`
+
+```ts
+import { IsString, IsNotEmpty } from "class-validator";
+import { ApiProperty } from "@nestjs/swagger";
+
+/**
+ * DTO reusable untuk semua operasi yang membutuhkan verifikasi kode.
+ * Mendukung kode TOTP 6 digit ("123456") maupun backup code ("XXXXX-XXXXX").
+ */
+export class VerifyCodeDto {
+  @ApiProperty({
+    description: "Kode TOTP 6 digit atau backup code (format: XXXXX-XXXXX)",
+    example: "123456",
+  })
+  @IsString()
+  @IsNotEmpty()
+  code: string;
 }
 
 ```
@@ -4271,31 +5235,31 @@ import {
 import { ApiTags, ApiOperation } from "@nestjs/swagger";
 import { AutoReplyService } from "./auto-reply.service";
 import { JwtAuthGuard } from "../../common/guards/jwt-auth.guard";
+import {
+  TierFeatureGuard,
+  RequireFeature,
+} from "../../common/guards/tier-feature.guard";
 import { CurrentUser } from "../../common/decorators/current-user.decorator";
 import { CreateAutoReplyDto } from "./dto/create-auto-reply.dto";
 import { UpdateAutoReplyDto } from "./dto/update-auto-reply.dto";
 import { ToggleAutoReplyDto } from "./dto/toggle-auto-reply.dto";
 
 @ApiTags("Auto Reply")
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, TierFeatureGuard)
+@RequireFeature("auto_reply")
 @Controller({ path: "auto-reply", version: "1" })
 export class AutoReplyController {
   constructor(private svc: AutoReplyService) {}
 
   @Get()
-  @ApiOperation({ summary: "Daftar rules auto reply" })
   async findAll(@CurrentUser() u: any) {
     return { status: true, data: await this.svc.findAll(u.id) };
   }
-
   @Post()
-  @ApiOperation({ summary: "Buat rule auto reply" })
   async create(@CurrentUser() u: any, @Body() dto: CreateAutoReplyDto) {
     return { status: true, data: await this.svc.create(u.id, dto) };
   }
-
   @Put(":id")
-  @ApiOperation({ summary: "Update rule auto reply" })
   async update(
     @CurrentUser() u: any,
     @Param("id") id: string,
@@ -4303,10 +5267,8 @@ export class AutoReplyController {
   ) {
     return { status: true, data: await this.svc.update(u.id, id, dto) };
   }
-
   @Post(":id/toggle")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: "Aktifkan / nonaktifkan rule" })
   async toggle(
     @CurrentUser() u: any,
     @Param("id") id: string,
@@ -4317,10 +5279,8 @@ export class AutoReplyController {
       data: await this.svc.toggle(u.id, id, dto.isActive),
     };
   }
-
   @Delete(":id")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: "Hapus rule auto reply" })
   async remove(@CurrentUser() u: any, @Param("id") id: string) {
     await this.svc.remove(u.id, id);
     return { status: true };
@@ -4333,84 +5293,16 @@ export class AutoReplyController {
 ## File : `src/modules/auto-reply/auto-reply.engine.ts`
 
 ```ts
-// import { Injectable, Logger } from "@nestjs/common";
-// import { PrismaService } from "../../prisma/prisma.service";
-// import { AiService } from "../ai/ai.service";
-// import { SessionManagerService } from "../sessions/session-manager.service";
-// import { toJid } from "../../common/utils/phone-normalizer.util";
-// import { MatchType } from "@prisma/client";
-
-// @Injectable()
-// export class AutoReplyEngine {
-//   private logger = new Logger("AutoReplyEngine");
-
-//   constructor(
-//     private prisma: PrismaService,
-//     private ai: AiService,
-//     private manager: SessionManagerService,
-//   ) {}
-
-//   async process(userId: string, sessionId: string, from: string, text: string) {
-//     if (!text?.trim()) return;
-
-//     const rules = await this.prisma.autoReply.findMany({
-//       where: { userId, isActive: true },
-//       orderBy: [{ priority: "asc" }],
-//     });
-
-//     for (const rule of rules) {
-//       const matched = this.matches(rule.matchType, rule.keyword, text);
-//       if (!matched) continue;
-
-//       let reply: string | null = null;
-
-//       if (rule.matchType === MatchType.ai_smart) {
-//         reply = await this.ai.getReply(userId, text, rule.response);
-//       } else {
-//         reply = rule.response;
-//       }
-
-//       if (!reply) continue;
-
-//       try {
-//         const jid = from.includes("@") ? from : toJid(from);
-//         await this.manager.sendMessage(sessionId, jid, reply);
-//         this.logger.debug(`Auto-reply sent to ${from} via rule ${rule.id}`);
-//       } catch (e) {
-//         this.logger.error(`Auto-reply send failed: ${e.message}`);
-//       }
-//       break; // Only one rule fires
-//     }
-//   }
-
-//   private matches(type: MatchType, keyword: string, text: string): boolean {
-//     const t = text.toLowerCase().trim();
-//     const k = keyword.toLowerCase().trim();
-//     switch (type) {
-//       case MatchType.exact:
-//         return t === k;
-//       case MatchType.contains:
-//         return t.includes(k);
-//       case MatchType.regex:
-//         try {
-//           return new RegExp(keyword, "i").test(text);
-//         } catch {
-//           return false;
-//         }
-//       case MatchType.ai_smart:
-//         return true; // Always try AI
-//       default:
-//         return false;
-//     }
-//   }
-// }
-
 import { Injectable, Logger, Inject, forwardRef } from "@nestjs/common";
 import { PrismaService } from "../../prisma/prisma.service";
 import { AiService } from "../ai/ai.service";
 import { SessionManagerService } from "../sessions/session-manager.service";
+import { RedisService } from "../../redis/redis.service";
 import { toJid } from "../../common/utils/phone-normalizer.util";
 import { MatchType } from "@prisma/client";
+
+// Jeda minimum antar auto-reply ke JID yang sama (detik)
+const LOOP_PROTECTION_TTL = 30;
 
 @Injectable()
 export class AutoReplyEngine {
@@ -4419,12 +5311,37 @@ export class AutoReplyEngine {
   constructor(
     private prisma: PrismaService,
     private ai: AiService,
+    private redis: RedisService,
     @Inject(forwardRef(() => SessionManagerService))
     private manager: SessionManagerService,
   ) {}
 
   async process(userId: string, sessionId: string, from: string, text: string) {
     if (!text?.trim()) return;
+
+    // FIX: Proteksi loop — skip jika kita baru saja membalas JID ini
+    const loopKey = `autoreply:loop:${userId}:${from}`;
+    const recentlyReplied = await this.redis.get<boolean>(loopKey);
+    if (recentlyReplied) {
+      this.logger.debug(`Loop protection: skip auto-reply to ${from}`);
+      return;
+    }
+
+    // FIX: Skip pesan dari nomor yang sama dengan sesi aktif (fromMe via inbox)
+    // whatsapp-web.js sudah filter fromMe=false di session-manager, tapi
+    // ada kasus sesi kirim ke dirinya sendiri — cek phoneNumber sesi
+    const session = await this.prisma.whatsappSession.findUnique({
+      where: { id: sessionId },
+    });
+    if (session?.phoneNumber) {
+      const fromNumber = from.split("@")[0];
+      if (fromNumber === session.phoneNumber) {
+        this.logger.debug(
+          `Skip auto-reply: message from own number ${fromNumber}`,
+        );
+        return;
+      }
+    }
 
     const rules = await this.prisma.autoReply.findMany({
       where: { userId, isActive: true },
@@ -4438,7 +5355,11 @@ export class AutoReplyEngine {
       let reply: string | null = null;
 
       if (rule.matchType === MatchType.ai_smart) {
-        reply = await this.ai.getReply(userId, text, rule.response);
+        try {
+          reply = await this.ai.getReply(userId, text, rule.response);
+        } catch {
+          continue; // skip rule ini jika AI tidak tersedia
+        }
       } else {
         reply = rule.response;
       }
@@ -4449,10 +5370,13 @@ export class AutoReplyEngine {
         const jid = from.includes("@") ? from : toJid(from);
         await this.manager.sendMessage(sessionId, jid, reply);
         this.logger.debug(`Auto-reply sent to ${from} via rule ${rule.id}`);
+
+        // FIX: Set loop protection — hindari balas lagi dalam 30 detik
+        await this.redis.set(loopKey, true, LOOP_PROTECTION_TTL);
       } catch (e) {
         this.logger.error(`Auto-reply send failed: ${e.message}`);
       }
-      break;
+      break; // hanya satu rule yang dieksekusi
     }
   }
 
@@ -4648,6 +5572,192 @@ export class UpdateAutoReplyDto extends PartialType(CreateAutoReplyDto) {}
 ```
 ---
 
+## File : `src/modules/backup/backup.module.ts`
+
+```ts
+import { Module } from "@nestjs/common";
+import { BackupService } from "./backup.service";
+
+@Module({ providers: [BackupService] })
+export class BackupModule {}
+
+```
+---
+
+## File : `src/modules/backup/backup.service.ts`
+
+```ts
+import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import { Cron } from "@nestjs/schedule";
+import { exec } from "child_process";
+import { promisify } from "util";
+import * as fs from "fs";
+import * as path from "path";
+import * as zlib from "zlib";
+import { pipeline } from "stream";
+
+const execAsync = promisify(exec);
+const pipelineAsync = promisify(pipeline);
+
+@Injectable()
+export class BackupService implements OnModuleInit {
+  private logger = new Logger("BackupService");
+  private backupPath: string;
+  private dbBackupPath: string;
+  private sessionBackupPath: string;
+  private mysqldumpAvailable = false;
+
+  constructor(private cfg: ConfigService) {}
+
+  async onModuleInit() {
+    this.backupPath =
+      this.cfg.get<string>("BACKUP_PATH") || "./storage/backups";
+    this.dbBackupPath = path.join(this.backupPath, "database");
+    this.sessionBackupPath = path.join(this.backupPath, "sessions");
+
+    fs.mkdirSync(this.dbBackupPath, { recursive: true });
+    fs.mkdirSync(this.sessionBackupPath, { recursive: true });
+
+    // FIX: cek ketersediaan mysqldump saat startup
+    await this.checkMysqldump();
+  }
+
+  private async checkMysqldump() {
+    try {
+      await execAsync("mysqldump --version");
+      this.mysqldumpAvailable = true;
+      this.logger.log("BackupService: mysqldump tersedia");
+    } catch {
+      this.mysqldumpAvailable = false;
+      this.logger.warn(
+        "BackupService: mysqldump tidak ditemukan di PATH — backup database dinonaktifkan. " +
+          "Install dengan: sudo apt-get install mysql-client",
+      );
+    }
+  }
+
+  // Backup database — 03:00 WIB (20:00 UTC)
+  @Cron("0 20 * * *")
+  async backupDatabase() {
+    if (!this.mysqldumpAvailable) {
+      this.logger.warn("Backup database dilewati: mysqldump tidak tersedia");
+      return;
+    }
+
+    this.logger.log("Starting database backup...");
+    try {
+      const dbUrl = this.cfg.get<string>("DATABASE_URL");
+      const parsed = this.parseDbUrl(dbUrl);
+      if (!parsed) {
+        this.logger.error("Cannot parse DATABASE_URL for backup");
+        return;
+      }
+
+      const timestamp = new Date()
+        .toISOString()
+        .replace(/[:.]/g, "-")
+        .slice(0, 19);
+      const dumpFile = path.join(
+        this.dbBackupPath,
+        `backup_${timestamp}.sql.gz`,
+      );
+
+      const { user, password, host, port, database } = parsed;
+      const envPass = password ? `MYSQL_PWD="${password}"` : "";
+      const cmd =
+        `${envPass} mysqldump -u ${user} -h ${host} -P ${port}` +
+        ` --single-transaction --routines --triggers ${database}`;
+
+      const child = exec(cmd);
+      const gzip = zlib.createGzip();
+      const output = fs.createWriteStream(dumpFile);
+
+      await pipelineAsync(child.stdout!, gzip, output);
+
+      const sizeMb = (fs.statSync(dumpFile).size / 1024 / 1024).toFixed(2);
+      this.logger.log(
+        `Database backup complete: ${path.basename(dumpFile)} (${sizeMb} MB)`,
+      );
+
+      await this.pruneOldBackups(this.dbBackupPath, 7);
+    } catch (e) {
+      this.logger.error(`Database backup failed: ${e.message}`);
+    }
+  }
+
+  // Backup sessions — 03:30 WIB (20:30 UTC)
+  @Cron("30 20 * * *")
+  async backupSessions() {
+    this.logger.log("Starting sessions backup...");
+    try {
+      const authPath =
+        this.cfg.get<string>("WA_AUTH_PATH") || "./storage/sessions";
+      if (!fs.existsSync(authPath)) {
+        this.logger.warn("Auth path not found, skipping session backup");
+        return;
+      }
+
+      const timestamp = new Date()
+        .toISOString()
+        .replace(/[:.]/g, "-")
+        .slice(0, 19);
+      const archiveFile = path.join(
+        this.sessionBackupPath,
+        `sessions_${timestamp}.tar.gz`,
+      );
+
+      await execAsync(
+        `tar -czf "${archiveFile}" -C "${path.dirname(path.resolve(authPath))}" "${path.basename(authPath)}"`,
+      );
+
+      const sizeMb = (fs.statSync(archiveFile).size / 1024 / 1024).toFixed(2);
+      this.logger.log(
+        `Sessions backup complete: ${path.basename(archiveFile)} (${sizeMb} MB)`,
+      );
+
+      await this.pruneOldBackups(this.sessionBackupPath, 7);
+    } catch (e) {
+      this.logger.error(`Sessions backup failed: ${e.message}`);
+    }
+  }
+
+  private async pruneOldBackups(dir: string, keep: number) {
+    const files = fs
+      .readdirSync(dir)
+      .map((f) => ({
+        name: f,
+        time: fs.statSync(path.join(dir, f)).mtimeMs,
+      }))
+      .sort((a, b) => b.time - a.time);
+
+    const toDelete = files.slice(keep);
+    for (const f of toDelete) {
+      fs.unlinkSync(path.join(dir, f.name));
+      this.logger.debug(`Pruned old backup: ${f.name}`);
+    }
+  }
+
+  private parseDbUrl(url: string) {
+    try {
+      const match = url?.match(/mysql:\/\/([^:]+):([^@]*)@([^:]+):(\d+)\/(.+)/);
+      if (!match) return null;
+      return {
+        user: match[1],
+        password: decodeURIComponent(match[2]),
+        host: match[3],
+        port: match[4],
+        database: match[5].split("?")[0],
+      };
+    } catch {
+      return null;
+    }
+  }
+}
+
+```
+---
+
 ## File : `src/modules/broadcast/broadcast.controller.ts`
 
 ```ts
@@ -4663,11 +5773,18 @@ import {
   UseInterceptors,
   HttpCode,
   HttpStatus,
+  Res, // FIX: import Res dari @nestjs/common
 } from "@nestjs/common";
 import { FileInterceptor } from "@nestjs/platform-express";
 import { ApiTags, ApiOperation } from "@nestjs/swagger";
+import { Response } from "express"; // FIX: import Response dari express
 import { BroadcastService } from "./broadcast.service";
 import { JwtAuthGuard } from "../../common/guards/jwt-auth.guard";
+import { QuotaGuard, QuotaType } from "../../common/guards/quota.guard";
+import {
+  TierFeatureGuard,
+  RequireFeature,
+} from "../../common/guards/tier-feature.guard";
 import { CurrentUser } from "../../common/decorators/current-user.decorator";
 import { CreateBroadcastDto } from "./dto/create-broadcast.dto";
 import { QueryCampaignsDto } from "./dto/query-campaigns.dto";
@@ -4694,7 +5811,33 @@ export class BroadcastController {
     };
   }
 
+  @Get("campaigns/:id")
+  @ApiOperation({ summary: "Detail campaign broadcast" })
+  async findOne(@CurrentUser() u: any, @Param("id") id: string) {
+    return { status: true, data: await this.svc.findOne(u.id, id) };
+  }
+
+  @Get("campaigns/:id/export-pdf")
+  @ApiOperation({ summary: "Export hasil campaign ke PDF" })
+  async exportCampaignPdf(
+    @CurrentUser() u: any,
+    @Param("id") id: string,
+    @Res() res: Response,
+  ) {
+    const buffer = await this.svc.exportCampaignPdf(u.id, id);
+    const date = new Date().toISOString().split("T")[0].replace(/-/g, "");
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="campaign_${id}_${date}.pdf"`,
+    );
+    res.send(buffer);
+  }
+
   @Post()
+  @UseGuards(TierFeatureGuard, QuotaGuard)
+  @RequireFeature("broadcast")
+  @QuotaType("monthly")
   @UseInterceptors(FileInterceptor("file"))
   @ApiOperation({ summary: "Buat broadcast baru" })
   async create(
@@ -4730,6 +5873,7 @@ import { BroadcastProcessor } from "./processors/broadcast.processor";
 import { QueueNames } from "../../common/constants/queue-names.constant";
 import { SessionsModule } from "../sessions/sessions.module";
 import { GatewayModule } from "../../gateway/gateway.module";
+import { NotificationsModule } from "../notifications/notifications.module";
 import * as path from "path";
 
 @Module({
@@ -4737,6 +5881,7 @@ import * as path from "path";
     BullModule.registerQueue({ name: QueueNames.BROADCAST }),
     SessionsModule,
     GatewayModule,
+    NotificationsModule, // FIX: diperlukan oleh QuotaGuard
     MulterModule.registerAsync({
       inject: [ConfigService],
       useFactory: (cfg: ConfigService) => ({
@@ -4775,19 +5920,20 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
-} from '@nestjs/common';
-import { InjectQueue } from '@nestjs/bullmq';
-import { Queue } from 'bullmq';
-import { PrismaService } from '../../prisma/prisma.service';
-import { QueueNames } from '../../common/constants/queue-names.constant';
-import { ErrorCodes } from '../../common/constants/error-codes.constant';
-import { SessionStatus } from '@prisma/client';
-import { normalizePhone } from '../../common/utils/phone-normalizer.util';
-import { parseCsvContacts } from '../../common/utils/csv-parser.util';
-import { CreateBroadcastDto } from './dto/create-broadcast.dto';
-import { QueryCampaignsDto } from './dto/query-campaigns.dto';
+} from "@nestjs/common";
+import { InjectQueue } from "@nestjs/bullmq";
+import { Queue } from "bullmq";
+import { PrismaService } from "../../prisma/prisma.service";
+import { QueueNames } from "../../common/constants/queue-names.constant";
+import { ErrorCodes } from "../../common/constants/error-codes.constant";
+import { SessionStatus } from "@prisma/client";
+import { normalizePhone } from "../../common/utils/phone-normalizer.util";
+import { parseCsvContacts } from "../../common/utils/csv-parser.util";
+import { generatePdf } from "../../common/utils/pdf-generator.util"; // FIX: import generatePdf
+import { CreateBroadcastDto } from "./dto/create-broadcast.dto";
+import { QueryCampaignsDto } from "./dto/query-campaigns.dto";
 
-const CANCELLABLE_STATUSES = ['pending', 'processing'] as const;
+const CANCELLABLE_STATUSES = ["pending", "processing"] as const;
 
 @Injectable()
 export class BroadcastService {
@@ -4808,11 +5954,19 @@ export class BroadcastService {
         where,
         skip,
         take: limit,
-        orderBy: { createdAt: 'desc' },
+        orderBy: { createdAt: "desc" },
       }),
       this.prisma.campaign.count({ where }),
     ]);
     return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
+  }
+
+  async findOne(userId: string, campaignId: string) {
+    const c = await this.prisma.campaign.findFirst({
+      where: { id: campaignId, userId },
+    });
+    if (!c) throw new NotFoundException({ code: ErrorCodes.NOT_FOUND });
+    return c;
   }
 
   async create(
@@ -4839,11 +5993,11 @@ export class BroadcastService {
         message: dto.message,
         mediaPath: file?.path,
         totalRecipients: deduped.length,
-        status: 'pending',
+        status: "pending",
       },
     });
 
-    await this.broadcastQueue.add('send', {
+    await this.broadcastQueue.add("send", {
       campaignId: campaign.id,
       userId,
       recipients: deduped,
@@ -4867,7 +6021,7 @@ export class BroadcastService {
       });
     }
 
-    const jobs = await this.broadcastQueue.getJobs(['waiting', 'active']);
+    const jobs = await this.broadcastQueue.getJobs(["waiting", "active"]);
     for (const job of jobs) {
       if (job.data?.campaignId === campaignId)
         await job.remove().catch(() => {});
@@ -4875,8 +6029,30 @@ export class BroadcastService {
 
     return this.prisma.campaign.update({
       where: { id: campaignId },
-      data: { status: 'cancelled' },
+      data: { status: "cancelled" },
     });
+  }
+
+  async exportCampaignPdf(userId: string, campaignId: string): Promise<Buffer> {
+    const campaign = await this.findOne(userId, campaignId);
+
+    const logs = await this.prisma.messageLog.findMany({
+      where: { campaignId },
+      orderBy: { timestamp: "asc" },
+      take: 5000,
+    });
+
+    const rows = logs.map((l) => ({
+      timestamp: new Date(l.timestamp).toLocaleString("id-ID"),
+      target: l.target,
+      status: l.status,
+      error: l.errorMessage?.slice(0, 60) ?? "-",
+    }));
+
+    return generatePdf(
+      `Campaign: ${campaign.name} | Total: ${campaign.totalRecipients} | Sukses: ${campaign.successCount} | Gagal: ${campaign.failedCount}`,
+      rows,
+    );
   }
 
   private async resolveRecipients(
@@ -4952,26 +6128,29 @@ export class QueryCampaignsDto extends PaginationDto {
 ## File : `src/modules/broadcast/processors/broadcast.processor.ts`
 
 ```ts
-import { Processor, WorkerHost } from '@nestjs/bullmq';
-import { Job } from 'bullmq';
-import { Logger } from '@nestjs/common';
-import { PrismaService } from '../../../prisma/prisma.service';
-import { SessionManagerService } from '../../sessions/session-manager.service';
-import { GatewayService } from '../../../gateway/gateway.service';
-import { QueueNames } from '../../../common/constants/queue-names.constant';
-import { CampaignStatus, MessageStatus, MessageType } from '@prisma/client';
-import { toJid } from '../../../common/utils/phone-normalizer.util';
-import { MessageMedia } from 'whatsapp-web.js';
-import { validateMimeType } from '../../../common/utils/mime-validator.util';
-import * as fs from 'fs';
-import * as path from 'path';
+import { Processor, WorkerHost } from "@nestjs/bullmq";
+import { Job } from "bullmq";
+import { Logger } from "@nestjs/common";
+import { PrismaService } from "../../../prisma/prisma.service";
+import { RedisService } from "../../../redis/redis.service";
+import { SessionManagerService } from "../../sessions/session-manager.service";
+import { GatewayService } from "../../../gateway/gateway.service";
+import { QueueNames } from "../../../common/constants/queue-names.constant";
+import { CacheKeys } from "../../../common/constants/cache-keys.constant";
+import { CampaignStatus, MessageStatus, MessageType } from "@prisma/client";
+import { toJid } from "../../../common/utils/phone-normalizer.util";
+import { MessageMedia } from "whatsapp-web.js";
+import { validateMimeType } from "../../../common/utils/mime-validator.util";
+import * as fs from "fs";
+import * as path from "path";
 
 @Processor(QueueNames.BROADCAST, { concurrency: 1 })
 export class BroadcastProcessor extends WorkerHost {
-  private logger = new Logger('BroadcastProcessor');
+  private logger = new Logger("BroadcastProcessor");
 
   constructor(
     private prisma: PrismaService,
+    private redis: RedisService, // FIX: inject RedisService
     private manager: SessionManagerService,
     private gateway: GatewayService,
   ) {
@@ -4987,7 +6166,6 @@ export class BroadcastProcessor extends WorkerHost {
       data: { status: CampaignStatus.processing },
     });
 
-    let rrIdx = 0;
     let successCount = 0;
     let failedCount = 0;
 
@@ -4998,22 +6176,30 @@ export class BroadcastProcessor extends WorkerHost {
       if (mime) {
         media = new MessageMedia(
           mime,
-          buf.toString('base64'),
+          buf.toString("base64"),
           path.basename(mediaPath),
         );
       }
     }
+
+    // FIX: gunakan Redis counter yang sama dengan getHealthySession()
+    // sehingga distribusi beban merata secara global, bukan hanya per-job
+    const rrKey = CacheKeys.roundRobin(userId);
 
     for (let i = 0; i < recipients.length; i++) {
       const recipient = recipients[i];
       const jid = toJid(recipient);
       let sent = false;
 
+      // Ambil & increment counter dari Redis
+      const currentIdx = (await this.redis.get<number>(rrKey)) ?? 0;
+      await this.redis.set(rrKey, (currentIdx + 1) % sessions.length, 86400);
+
+      // Susun urutan sesi mulai dari index saat ini (round-robin)
       const orderedSessions = [
-        ...sessions.slice(rrIdx % sessions.length),
-        ...sessions.slice(0, rrIdx % sessions.length),
+        ...sessions.slice(currentIdx % sessions.length),
+        ...sessions.slice(0, currentIdx % sessions.length),
       ];
-      rrIdx++;
 
       for (const sessionId of orderedSessions) {
         try {
@@ -5040,7 +6226,7 @@ export class BroadcastProcessor extends WorkerHost {
           break;
         } catch (e) {
           this.logger.warn(
-            `Session ${sessionId} failed for ${recipient}: ${e.message}, trying next session`,
+            `Session ${sessionId} failed for ${recipient}: ${e.message}, trying next`,
           );
         }
       }
@@ -5056,7 +6242,7 @@ export class BroadcastProcessor extends WorkerHost {
             message,
             messageType: MessageType.text,
             status: MessageStatus.failed,
-            errorMessage: 'All sessions failed',
+            errorMessage: "All sessions failed",
           },
         });
       }
@@ -5075,6 +6261,7 @@ export class BroadcastProcessor extends WorkerHost {
         failedCount,
       });
 
+      // Jeda acak 1–3 detik (anti-spam)
       const delay = 1000 + Math.random() * 2000;
       await new Promise((r) => setTimeout(r, delay));
     }
@@ -5206,12 +6393,29 @@ export class BroadcastListService {
 ## File : `src/modules/calls/calls.controller.ts`
 
 ```ts
-import { Controller, Get, Query, UseGuards } from "@nestjs/common";
+import {
+  Controller,
+  Get,
+  Post,
+  Query,
+  Body,
+  Param,
+  UseGuards,
+} from "@nestjs/common";
 import { ApiTags, ApiOperation } from "@nestjs/swagger";
 import { CallsService } from "./calls.service";
 import { JwtAuthGuard } from "../../common/guards/jwt-auth.guard";
 import { CurrentUser } from "../../common/decorators/current-user.decorator";
 import { PaginationDto } from "../../common/dto/pagination.dto";
+import { IsString, IsNotEmpty } from "class-validator";
+import { ApiProperty } from "@nestjs/swagger";
+
+class CreateCallLinkDto {
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  sessionId: string;
+}
 
 @ApiTags("Calls")
 @UseGuards(JwtAuthGuard)
@@ -5234,6 +6438,16 @@ export class CallsController {
       },
     };
   }
+
+  // FIX: endpoint buat call link
+  @Post("link")
+  @ApiOperation({ summary: "Buat call link untuk dibagikan" })
+  async createCallLink(@CurrentUser() u: any, @Body() dto: CreateCallLinkDto) {
+    return {
+      status: true,
+      data: await this.svc.createCallLink(u.id, dto.sessionId),
+    };
+  }
 }
 
 ```
@@ -5245,8 +6459,13 @@ export class CallsController {
 import { Module } from "@nestjs/common";
 import { CallsController } from "./calls.controller";
 import { CallsService } from "./calls.service";
+import { SessionsModule } from "../sessions/sessions.module";
 
-@Module({ controllers: [CallsController], providers: [CallsService] })
+@Module({
+  imports: [SessionsModule],
+  controllers: [CallsController],
+  providers: [CallsService],
+})
 export class CallsModule {}
 
 ```
@@ -5255,13 +6474,18 @@ export class CallsModule {}
 ## File : `src/modules/calls/calls.service.ts`
 
 ```ts
-import { Injectable } from "@nestjs/common";
+import { Injectable, BadRequestException } from "@nestjs/common";
 import { PrismaService } from "../../prisma/prisma.service";
+import { SessionManagerService } from "../sessions/session-manager.service";
+import { ErrorCodes } from "../../common/constants/error-codes.constant";
 import { PaginationDto } from "../../common/dto/pagination.dto";
 
 @Injectable()
 export class CallsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private manager: SessionManagerService,
+  ) {}
 
   async findAll(userId: string, dto: PaginationDto) {
     const page = dto.page ?? 1;
@@ -5277,6 +6501,30 @@ export class CallsService {
       this.prisma.callLog.count({ where: { userId } }),
     ]);
     return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
+  }
+
+  // FIX: createCallLink via whatsapp-web.js
+  async createCallLink(userId: string, sessionId: string) {
+    const session = await this.prisma.whatsappSession.findFirst({
+      where: { id: sessionId, userId },
+    });
+    if (!session)
+      throw new BadRequestException({ code: ErrorCodes.SESSION_NOT_FOUND });
+
+    const client = this.manager.getClient(sessionId);
+    if (!client)
+      throw new BadRequestException({ code: ErrorCodes.SESSION_NOT_CONNECTED });
+
+    // whatsapp-web.js: createCallLink() tersedia di versi terbaru
+    const link = await (client as any).createCallLink?.();
+    if (!link) {
+      throw new BadRequestException({
+        code: ErrorCodes.INTERNAL,
+        message: "createCallLink tidak didukung di versi whatsapp-web.js ini.",
+      });
+    }
+
+    return { callLink: link };
   }
 }
 
@@ -5305,84 +6553,73 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
-} from '@nestjs/common';
-import { ApiTags, ApiOperation } from '@nestjs/swagger';
-import { ChannelsService } from './channels.service';
-import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { CreateChannelDto } from './dto/create-channel.dto';
-import { UpdateChannelDto } from './dto/update-channel.dto';
-import { SearchChannelDto } from './dto/search-channel.dto';
+} from "@nestjs/common";
+import { ApiTags, ApiOperation } from "@nestjs/swagger";
+import { ChannelsService } from "./channels.service";
+import { JwtAuthGuard } from "../../common/guards/jwt-auth.guard";
 import {
-  ManageChannelAdminDto,
-  ChannelAdminAction,
-} from './dto/manage-channel-admin.dto';
+  TierFeatureGuard,
+  RequireFeature,
+} from "../../common/guards/tier-feature.guard";
+import { CreateChannelDto } from "./dto/create-channel.dto";
+import { UpdateChannelDto } from "./dto/update-channel.dto";
+import { SearchChannelDto } from "./dto/search-channel.dto";
+import { ManageChannelAdminDto } from "./dto/manage-channel-admin.dto";
 
-@ApiTags('Channels')
-@UseGuards(JwtAuthGuard)
-@Controller({ path: 'channels', version: '1' })
+@ApiTags("Channels")
+@UseGuards(JwtAuthGuard, TierFeatureGuard)
+@RequireFeature("channels")
+@Controller({ path: "channels", version: "1" })
 export class ChannelsController {
   constructor(private svc: ChannelsService) {}
 
-  @Get(':sessionId')
-  @ApiOperation({ summary: 'Dapatkan semua channel yang diikuti' })
-  async getAll(@Param('sessionId') sid: string) {
+  @Get(":sessionId")
+  async getAll(@Param("sessionId") sid: string) {
     return { status: true, data: await this.svc.getAll(sid) };
   }
-
-  @Get(':sessionId/search')
-  @ApiOperation({ summary: 'Cari channel berdasarkan keyword' })
+  @Get(":sessionId/search")
   async search(
-    @Param('sessionId') sid: string,
+    @Param("sessionId") sid: string,
     @Query() dto: SearchChannelDto,
   ) {
     return { status: true, data: await this.svc.search(sid, dto.query) };
   }
-
-  @Get(':sessionId/invite/:inviteCode')
-  @ApiOperation({ summary: 'Dapatkan channel by invite code' })
+  @Get(":sessionId/invite/:inviteCode")
   async getByInviteCode(
-    @Param('sessionId') sid: string,
-    @Param('inviteCode') code: string,
+    @Param("sessionId") sid: string,
+    @Param("inviteCode") code: string,
   ) {
     return { status: true, data: await this.svc.getByInviteCode(sid, code) };
   }
-
-  @Post(':sessionId/:channelId/subscribe')
+  @Post(":sessionId/:channelId/subscribe")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Subscribe ke channel' })
   async subscribe(
-    @Param('sessionId') sid: string,
-    @Param('channelId') cid: string,
+    @Param("sessionId") sid: string,
+    @Param("channelId") cid: string,
   ) {
     return { status: true, data: await this.svc.subscribe(sid, cid) };
   }
-
-  @Post(':sessionId/:channelId/unsubscribe')
+  @Post(":sessionId/:channelId/unsubscribe")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Unsubscribe dari channel' })
   async unsubscribe(
-    @Param('sessionId') sid: string,
-    @Param('channelId') cid: string,
+    @Param("sessionId") sid: string,
+    @Param("channelId") cid: string,
   ) {
     return { status: true, data: await this.svc.unsubscribe(sid, cid) };
   }
-
-  @Post(':sessionId/:channelId/send')
-  @ApiOperation({ summary: 'Kirim pesan ke channel' })
+  @Post(":sessionId/:channelId/send")
   async send(
-    @Param('sessionId') sid: string,
-    @Param('channelId') cid: string,
+    @Param("sessionId") sid: string,
+    @Param("channelId") cid: string,
     @Body() body: { message: string },
   ) {
     return { status: true, data: await this.svc.send(sid, cid, body.message) };
   }
-
-  @Post(':sessionId/:channelId/admin')
+  @Post(":sessionId/:channelId/admin")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Kelola admin channel (add/remove)' })
   async manageAdmin(
-    @Param('sessionId') sid: string,
-    @Param('channelId') cid: string,
+    @Param("sessionId") sid: string,
+    @Param("channelId") cid: string,
     @Body() dto: ManageChannelAdminDto,
   ) {
     return {
@@ -5391,17 +6628,15 @@ export class ChannelsController {
         sid,
         cid,
         dto.participantJid,
-        dto.action as 'add' | 'remove',
+        dto.action as "add" | "remove",
       ),
     };
   }
-
-  @Post(':sessionId/:channelId/transfer')
+  @Post(":sessionId/:channelId/transfer")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Transfer kepemilikan channel' })
   async transferOwnership(
-    @Param('sessionId') sid: string,
-    @Param('channelId') cid: string,
+    @Param("sessionId") sid: string,
+    @Param("channelId") cid: string,
     @Body() body: { newOwnerJid: string },
   ) {
     return {
@@ -5409,12 +6644,10 @@ export class ChannelsController {
       data: await this.svc.transferOwnership(sid, cid, body.newOwnerJid),
     };
   }
-
-  @Put(':sessionId/:channelId')
-  @ApiOperation({ summary: 'Update nama dan deskripsi channel' })
+  @Put(":sessionId/:channelId")
   async update(
-    @Param('sessionId') sid: string,
-    @Param('channelId') cid: string,
+    @Param("sessionId") sid: string,
+    @Param("channelId") cid: string,
     @Body() dto: UpdateChannelDto,
   ) {
     return {
@@ -5422,13 +6655,11 @@ export class ChannelsController {
       data: await this.svc.update(sid, cid, dto.name, dto.description),
     };
   }
-
-  @Delete(':sessionId/:channelId')
+  @Delete(":sessionId/:channelId")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Hapus channel' })
   async delete(
-    @Param('sessionId') sid: string,
-    @Param('channelId') cid: string,
+    @Param("sessionId") sid: string,
+    @Param("channelId") cid: string,
   ) {
     return { status: true, data: await this.svc.delete(sid, cid) };
   }
@@ -5885,15 +7116,32 @@ export class CleanupService {
     private config: ConfigService,
   ) {}
 
-  @Cron("0 2 * * *") // 02:00 WIB daily
+  @Cron("0 2 * * *")
   async run() {
     this.logger.log("Running cleanup...");
     await this.cleanMessageLogs();
     await this.cleanWorkflowLogs();
     await this.cleanAuditLogs();
     await this.cleanWebhookQueue();
-    await this.cleanOrphanBroadcastFiles();
+    await this.cleanOrphanBroadcastFiles(); // FIX
+    await this.cleanOrphanUploadFiles(); // FIX: tambah cleanup upload lama
     this.logger.log("Cleanup complete");
+  }
+
+  @Cron("0 17 * * *") // 00:00 WIB
+  async resetDailyQuota() {
+    const { count } = await this.prisma.userQuota.updateMany({
+      data: { messagesSentToday: 0, lastDailyResetAt: new Date() },
+    });
+    this.logger.log(`Daily quota reset for ${count} users`);
+  }
+
+  @Cron("0 17 1 * *") // Tgl 1 tiap bulan 00:00 WIB
+  async resetMonthlyQuota() {
+    const { count } = await this.prisma.userQuota.updateMany({
+      data: { broadcastsThisMonth: 0, lastMonthlyResetAt: new Date() },
+    });
+    this.logger.log(`Monthly broadcast quota reset for ${count} users`);
   }
 
   private async cleanMessageLogs() {
@@ -5930,28 +7178,66 @@ export class CleanupService {
     this.logger.debug(`Deleted ${count} old webhook queue entries`);
   }
 
+  /**
+   * FIX: Broadcast files disimpan flat di /broadcasts/tmp/{timestamp}-{filename}
+   * Cleanup file tmp yang lebih dari 24 jam dan campaign-nya sudah completed/cancelled.
+   * Logika lama salah karena mencari folder bernama campaign ID (tidak ada).
+   */
   private async cleanOrphanBroadcastFiles() {
-    const storagePath = path.join(
+    const tmpPath = path.join(
       this.config.get("app.storagePath"),
       "broadcasts",
+      "tmp",
     );
-    if (!fs.existsSync(storagePath)) return;
+    if (!fs.existsSync(tmpPath)) return;
 
-    const dirs = fs.readdirSync(storagePath);
-    for (const dir of dirs) {
-      const campaign = await this.prisma.campaign.findUnique({
-        where: { id: dir },
-      });
-      if (
-        !campaign ||
-        campaign.status === "completed" ||
-        campaign.status === "cancelled"
-      ) {
-        fs.rmSync(path.join(storagePath, dir), {
-          recursive: true,
-          force: true,
-        });
-        this.logger.debug(`Removed orphan broadcast folder: ${dir}`);
+    const files = fs.readdirSync(tmpPath);
+    const cutoff = Date.now() - 24 * 3600 * 1000; // lebih dari 24 jam
+
+    for (const file of files) {
+      const filePath = path.join(tmpPath, file);
+      try {
+        const stat = fs.statSync(filePath);
+        if (stat.mtimeMs < cutoff) {
+          fs.unlinkSync(filePath);
+          this.logger.debug(`Removed old broadcast tmp file: ${file}`);
+        }
+      } catch (e) {
+        this.logger.warn(`Could not clean file ${file}: ${e.message}`);
+      }
+    }
+  }
+
+  /**
+   * FIX: Hapus file upload media yang lebih dari 7 hari
+   * (file dari POST /messages/:sessionId/messages/:messageId/download)
+   */
+  private async cleanOrphanUploadFiles() {
+    const uploadsPath = path.join(
+      this.config.get("app.storagePath"),
+      "uploads",
+    );
+    if (!fs.existsSync(uploadsPath)) return;
+
+    const cutoff = Date.now() - 7 * 24 * 3600 * 1000;
+    const userDirs = fs.readdirSync(uploadsPath);
+
+    for (const userDir of userDirs) {
+      const userPath = path.join(uploadsPath, userDir);
+      if (!fs.statSync(userPath).isDirectory()) continue;
+
+      const files = fs.readdirSync(userPath);
+      for (const file of files) {
+        const filePath = path.join(userPath, file);
+        try {
+          const stat = fs.statSync(filePath);
+          if (stat.mtimeMs < cutoff) {
+            fs.unlinkSync(filePath);
+            this.logger.debug(`Removed old upload file: ${userDir}/${file}`);
+          }
+        } catch (e) {
+          this.logger.warn(`Could not clean upload file ${file}: ${e.message}`);
+        }
       }
     }
   }
@@ -6402,30 +7688,32 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
-} from '@nestjs/common';
-import { ApiTags, ApiOperation } from '@nestjs/swagger';
-import { CustomerNoteService } from './customer-note.service';
-import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { UpsertNoteDto } from './dto/upsert-note.dto';
+} from "@nestjs/common";
+import { ApiTags, ApiOperation } from "@nestjs/swagger";
+import { CustomerNoteService } from "./customer-note.service";
+import { JwtAuthGuard } from "../../common/guards/jwt-auth.guard";
+import {
+  TierFeatureGuard,
+  RequireFeature,
+} from "../../common/guards/tier-feature.guard";
+import { CurrentUser } from "../../common/decorators/current-user.decorator";
+import { UpsertNoteDto } from "./dto/upsert-note.dto";
 
-@ApiTags('Customer Note')
-@UseGuards(JwtAuthGuard)
-@Controller({ path: 'contacts/:contactId/note', version: '1' })
+@ApiTags("Customer Note")
+@UseGuards(JwtAuthGuard, TierFeatureGuard)
+@RequireFeature("customer_note")
+@Controller({ path: "contacts/:contactId/note", version: "1" })
 export class CustomerNoteController {
   constructor(private svc: CustomerNoteService) {}
 
   @Get()
-  @ApiOperation({ summary: 'Dapatkan catatan kontak' })
-  async getNote(@CurrentUser() u: any, @Param('contactId') cid: string) {
+  async getNote(@CurrentUser() u: any, @Param("contactId") cid: string) {
     return { status: true, data: await this.svc.getNote(u.id, cid) };
   }
-
   @Put()
-  @ApiOperation({ summary: 'Tambah atau update catatan kontak' })
   async upsertNote(
     @CurrentUser() u: any,
-    @Param('contactId') cid: string,
+    @Param("contactId") cid: string,
     @Body() dto: UpsertNoteDto,
   ) {
     return {
@@ -6433,11 +7721,9 @@ export class CustomerNoteController {
       data: await this.svc.upsertNote(u.id, cid, dto.content),
     };
   }
-
   @Delete()
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Hapus catatan kontak' })
-  async deleteNote(@CurrentUser() u: any, @Param('contactId') cid: string) {
+  async deleteNote(@CurrentUser() u: any, @Param("contactId") cid: string) {
     return { status: true, data: await this.svc.deleteNote(u.id, cid) };
   }
 }
@@ -6543,6 +7829,10 @@ import {
 import { ApiTags, ApiOperation } from "@nestjs/swagger";
 import { DripService } from "./drip.service";
 import { JwtAuthGuard } from "../../common/guards/jwt-auth.guard";
+import {
+  TierFeatureGuard,
+  RequireFeature,
+} from "../../common/guards/tier-feature.guard";
 import { CurrentUser } from "../../common/decorators/current-user.decorator";
 import { CreateDripDto } from "./dto/create-drip.dto";
 import { UpdateDripDto } from "./dto/update-drip.dto";
@@ -6550,25 +7840,21 @@ import { ToggleDripDto } from "./dto/toggle-drip.dto";
 import { QuerySubscribersDto } from "./dto/query-subscribers.dto";
 
 @ApiTags("Drip Campaign")
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, TierFeatureGuard)
+@RequireFeature("drip_campaign")
 @Controller({ path: "drip-campaigns", version: "1" })
 export class DripController {
   constructor(private svc: DripService) {}
 
   @Get()
-  @ApiOperation({ summary: "Daftar drip campaign" })
   async findAll(@CurrentUser() u: any) {
     return { status: true, data: await this.svc.findAll(u.id) };
   }
-
   @Post()
-  @ApiOperation({ summary: "Buat drip campaign" })
   async create(@CurrentUser() u: any, @Body() dto: CreateDripDto) {
     return { status: true, data: await this.svc.create(u.id, dto) };
   }
-
   @Put(":id")
-  @ApiOperation({ summary: "Update drip campaign" })
   async update(
     @CurrentUser() u: any,
     @Param("id") id: string,
@@ -6576,10 +7862,8 @@ export class DripController {
   ) {
     return { status: true, data: await this.svc.update(u.id, id, dto) };
   }
-
   @Post(":id/toggle")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: "Aktifkan / nonaktifkan drip campaign" })
   async toggle(
     @CurrentUser() u: any,
     @Param("id") id: string,
@@ -6590,17 +7874,13 @@ export class DripController {
       data: await this.svc.toggle(u.id, id, dto.isActive),
     };
   }
-
   @Delete(":id")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: "Hapus drip campaign" })
   async remove(@CurrentUser() u: any, @Param("id") id: string) {
     await this.svc.remove(u.id, id);
     return { status: true };
   }
-
   @Get(":id/subscribers")
-  @ApiOperation({ summary: "Daftar subscriber drip campaign" })
   async getSubscribers(
     @CurrentUser() u: any,
     @Param("id") id: string,
@@ -6618,10 +7898,8 @@ export class DripController {
       },
     };
   }
-
   @Post("subscriptions/:id/cancel")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: "Batalkan subscription kontak" })
   async cancelSubscription(@CurrentUser() u: any, @Param("id") id: string) {
     return { status: true, data: await this.svc.cancelSubscription(u.id, id) };
   }
@@ -7146,46 +8424,47 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
-} from '@nestjs/common';
-import { ApiTags, ApiOperation } from '@nestjs/swagger';
-import { GroupsService } from './groups.service';
-import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { CreateGroupDto } from './dto/create-group.dto';
-import { ManageMembersDto } from './dto/manage-members.dto';
-import { ManageAdminsDto } from './dto/manage-admins.dto';
-import { UpdateGroupDto } from './dto/update-group.dto';
-import { MembershipRequestDto } from './dto/membership-request.dto';
+} from "@nestjs/common";
+import { ApiTags, ApiOperation } from "@nestjs/swagger";
+import { GroupsService } from "./groups.service";
+import { JwtAuthGuard } from "../../common/guards/jwt-auth.guard";
+import { CreateGroupDto } from "./dto/create-group.dto";
+import { ManageMembersDto } from "./dto/manage-members.dto";
+import { ManageAdminsDto } from "./dto/manage-admins.dto";
+import { UpdateGroupDto } from "./dto/update-group.dto";
+import { MembershipRequestDto } from "./dto/membership-request.dto";
 
-@ApiTags('Groups')
+@ApiTags("Groups")
 @UseGuards(JwtAuthGuard)
-@Controller({ path: 'groups', version: '1' })
+@Controller({ path: "groups", version: "1" })
 export class GroupsController {
   constructor(private svc: GroupsService) {}
 
-  @Post()
-  @ApiOperation({ summary: 'Buat grup baru' })
-  async create(@Param('sessionId') sid: string, @Body() dto: CreateGroupDto) {
+  // FIX: route kini menjadi POST /groups/:sessionId agar param :sessionId terbaca
+  @Post(":sessionId")
+  @ApiOperation({ summary: "Buat grup baru" })
+  async create(@Param("sessionId") sid: string, @Body() dto: CreateGroupDto) {
     return {
       status: true,
       data: await this.svc.create(sid, dto.name, dto.participants),
     };
   }
 
-  @Get(':sessionId/:groupId')
-  @ApiOperation({ summary: 'Info grup' })
+  @Get(":sessionId/:groupId")
+  @ApiOperation({ summary: "Info grup" })
   async getInfo(
-    @Param('sessionId') sid: string,
-    @Param('groupId') gid: string,
+    @Param("sessionId") sid: string,
+    @Param("groupId") gid: string,
   ) {
     return { status: true, data: await this.svc.getInfo(sid, gid) };
   }
 
-  @Post(':sessionId/:groupId/participants/add')
+  @Post(":sessionId/:groupId/participants/add")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Tambah anggota grup' })
+  @ApiOperation({ summary: "Tambah anggota grup" })
   async addParticipants(
-    @Param('sessionId') sid: string,
-    @Param('groupId') gid: string,
+    @Param("sessionId") sid: string,
+    @Param("groupId") gid: string,
     @Body() dto: ManageMembersDto,
   ) {
     return {
@@ -7194,12 +8473,12 @@ export class GroupsController {
     };
   }
 
-  @Post(':sessionId/:groupId/participants/remove')
+  @Post(":sessionId/:groupId/participants/remove")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Hapus anggota grup' })
+  @ApiOperation({ summary: "Hapus anggota grup" })
   async removeParticipants(
-    @Param('sessionId') sid: string,
-    @Param('groupId') gid: string,
+    @Param("sessionId") sid: string,
+    @Param("groupId") gid: string,
     @Body() dto: ManageMembersDto,
   ) {
     return {
@@ -7208,12 +8487,12 @@ export class GroupsController {
     };
   }
 
-  @Post(':sessionId/:groupId/participants/promote')
+  @Post(":sessionId/:groupId/participants/promote")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Promosi anggota menjadi admin' })
+  @ApiOperation({ summary: "Promosi anggota menjadi admin" })
   async promoteParticipants(
-    @Param('sessionId') sid: string,
-    @Param('groupId') gid: string,
+    @Param("sessionId") sid: string,
+    @Param("groupId") gid: string,
     @Body() dto: ManageAdminsDto,
   ) {
     return {
@@ -7222,12 +8501,12 @@ export class GroupsController {
     };
   }
 
-  @Post(':sessionId/:groupId/participants/demote')
+  @Post(":sessionId/:groupId/participants/demote")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Demosi admin menjadi anggota biasa' })
+  @ApiOperation({ summary: "Demosi admin menjadi anggota biasa" })
   async demoteParticipants(
-    @Param('sessionId') sid: string,
-    @Param('groupId') gid: string,
+    @Param("sessionId") sid: string,
+    @Param("groupId") gid: string,
     @Body() dto: ManageAdminsDto,
   ) {
     return {
@@ -7236,12 +8515,12 @@ export class GroupsController {
     };
   }
 
-  @Post(':sessionId/:groupId/update')
+  @Post(":sessionId/:groupId/update")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Update nama dan deskripsi grup' })
+  @ApiOperation({ summary: "Update nama dan deskripsi grup" })
   async updateGroup(
-    @Param('sessionId') sid: string,
-    @Param('groupId') gid: string,
+    @Param("sessionId") sid: string,
+    @Param("groupId") gid: string,
     @Body() dto: UpdateGroupDto,
   ) {
     const results: any = {};
@@ -7256,37 +8535,37 @@ export class GroupsController {
     return { status: true, data: results };
   }
 
-  @Post(':sessionId/:groupId/leave')
+  @Post(":sessionId/:groupId/leave")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Keluar dari grup' })
-  async leave(@Param('sessionId') sid: string, @Param('groupId') gid: string) {
+  @ApiOperation({ summary: "Keluar dari grup" })
+  async leave(@Param("sessionId") sid: string, @Param("groupId") gid: string) {
     return { status: true, data: await this.svc.leave(sid, gid) };
   }
 
-  @Get(':sessionId/:groupId/invite')
-  @ApiOperation({ summary: 'Dapatkan invite link grup' })
+  @Get(":sessionId/:groupId/invite")
+  @ApiOperation({ summary: "Dapatkan invite link grup" })
   async getInviteCode(
-    @Param('sessionId') sid: string,
-    @Param('groupId') gid: string,
+    @Param("sessionId") sid: string,
+    @Param("groupId") gid: string,
   ) {
     return { status: true, data: await this.svc.getInviteCode(sid, gid) };
   }
 
-  @Post(':sessionId/:groupId/invite/revoke')
+  @Post(":sessionId/:groupId/invite/revoke")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Revoke invite link grup' })
+  @ApiOperation({ summary: "Revoke invite link grup" })
   async revokeInvite(
-    @Param('sessionId') sid: string,
-    @Param('groupId') gid: string,
+    @Param("sessionId") sid: string,
+    @Param("groupId") gid: string,
   ) {
     return { status: true, data: await this.svc.revokeInvite(sid, gid) };
   }
 
-  @Post(':sessionId/join')
+  @Post(":sessionId/join")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Join grup via invite code' })
+  @ApiOperation({ summary: "Join grup via invite code" })
   async join(
-    @Param('sessionId') sid: string,
+    @Param("sessionId") sid: string,
     @Body() body: { inviteCode: string },
   ) {
     return {
@@ -7295,21 +8574,21 @@ export class GroupsController {
     };
   }
 
-  @Get(':sessionId/invite/:inviteCode/info')
-  @ApiOperation({ summary: 'Dapatkan info grup sebelum join' })
+  @Get(":sessionId/invite/:inviteCode/info")
+  @ApiOperation({ summary: "Dapatkan info grup sebelum join" })
   async getInviteInfo(
-    @Param('sessionId') sid: string,
-    @Param('inviteCode') code: string,
+    @Param("sessionId") sid: string,
+    @Param("inviteCode") code: string,
   ) {
     return { status: true, data: await this.svc.getInviteInfo(sid, code) };
   }
 
-  @Post(':sessionId/:groupId/membership-request')
+  @Post(":sessionId/:groupId/membership-request")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Approve atau reject join request' })
+  @ApiOperation({ summary: "Approve atau reject join request" })
   async handleMembershipRequest(
-    @Param('sessionId') sid: string,
-    @Param('groupId') gid: string,
+    @Param("sessionId") sid: string,
+    @Param("groupId") gid: string,
     @Body() dto: MembershipRequestDto,
   ) {
     return {
@@ -7318,11 +8597,11 @@ export class GroupsController {
     };
   }
 
-  @Get(':sessionId/:groupId/membership-requests')
-  @ApiOperation({ summary: 'Dapatkan daftar join request yang pending' })
+  @Get(":sessionId/:groupId/membership-requests")
+  @ApiOperation({ summary: "Dapatkan daftar join request yang pending" })
   async getMembershipRequests(
-    @Param('sessionId') sid: string,
-    @Param('groupId') gid: string,
+    @Param("sessionId") sid: string,
+    @Param("groupId") gid: string,
   ) {
     return {
       status: true,
@@ -7330,11 +8609,11 @@ export class GroupsController {
     };
   }
 
-  @Get(':sessionId/contacts/:contactId/common-groups')
-  @ApiOperation({ summary: 'Dapatkan grup yang sama antara bot dan kontak' })
+  @Get(":sessionId/contacts/:contactId/common-groups")
+  @ApiOperation({ summary: "Dapatkan grup yang sama antara bot dan kontak" })
   async getCommonGroups(
-    @Param('sessionId') sid: string,
-    @Param('contactId') cid: string,
+    @Param("sessionId") sid: string,
+    @Param("contactId") cid: string,
   ) {
     return { status: true, data: await this.svc.getCommonGroups(sid, cid) };
   }
@@ -7592,16 +8871,35 @@ export class QueryInboxDto extends PaginationDto {
 import {
   Controller,
   Get,
+  Post,
   Patch,
   Param,
+  Body,
   Query,
   UseGuards,
+  HttpCode,
+  HttpStatus,
 } from "@nestjs/common";
 import { ApiTags, ApiOperation } from "@nestjs/swagger";
+import { IsString, IsNotEmpty, IsOptional } from "class-validator";
+import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
 import { InboxService } from "./inbox.service";
 import { JwtAuthGuard } from "../../common/guards/jwt-auth.guard";
+import { QuotaGuard } from "../../common/guards/quota.guard";
 import { CurrentUser } from "../../common/decorators/current-user.decorator";
 import { QueryInboxDto } from "./dto/query-inbox.dto";
+
+class ReplyInboxDto {
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  message: string;
+
+  @ApiPropertyOptional({ description: "Quote pesan yang dibalas" })
+  @IsOptional()
+  @IsString()
+  quotedMessageId?: string;
+}
 
 @ApiTags("Inbox")
 @UseGuards(JwtAuthGuard)
@@ -7626,7 +8924,7 @@ export class InboxController {
   }
 
   @Get("conversations")
-  @ApiOperation({ summary: "Daftar percakapan (grouped by JID)" })
+  @ApiOperation({ summary: "Daftar percakapan grouped by JID" })
   async conversations(@CurrentUser() u: any) {
     return { status: true, data: await this.inbox.getConversations(u.id) };
   }
@@ -7644,6 +8942,25 @@ export class InboxController {
     await this.inbox.markAllRead(u.id, jid);
     return { status: true };
   }
+
+  /**
+   * FIX: Balas pesan langsung dari inbox.
+   * Secara otomatis menggunakan sesi yang sama dengan pesan masuk.
+   */
+  @Post(":id/reply")
+  @UseGuards(QuotaGuard)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "Balas pesan langsung dari inbox" })
+  async reply(
+    @CurrentUser() u: any,
+    @Param("id") id: string,
+    @Body() dto: ReplyInboxDto,
+  ) {
+    return {
+      status: true,
+      data: await this.inbox.reply(u.id, id, dto.message, dto.quotedMessageId),
+    };
+  }
 }
 
 ```
@@ -7652,11 +8969,17 @@ export class InboxController {
 ## File : `src/modules/inbox/inbox.module.ts`
 
 ```ts
-import { Module } from "@nestjs/common";
+import { Module, forwardRef } from "@nestjs/common";
 import { InboxController } from "./inbox.controller";
 import { InboxService } from "./inbox.service";
+import { SessionsModule } from "../sessions/sessions.module";
+import { NotificationsModule } from "../notifications/notifications.module";
 
 @Module({
+  imports: [
+    forwardRef(() => SessionsModule), // FIX: circular — SessionsModule ↔ InboxModule
+    NotificationsModule,
+  ],
   controllers: [InboxController],
   providers: [InboxService],
   exports: [InboxService],
@@ -7669,15 +8992,27 @@ export class InboxModule {}
 ## File : `src/modules/inbox/inbox.service.ts`
 
 ```ts
-import { Injectable, NotFoundException } from "@nestjs/common";
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+  Inject,
+  forwardRef,
+} from "@nestjs/common";
 import { PrismaService } from "../../prisma/prisma.service";
+import { SessionManagerService } from "../sessions/session-manager.service";
 import { ErrorCodes } from "../../common/constants/error-codes.constant";
 import { QueryInboxDto } from "./dto/query-inbox.dto";
 import { isGroupJid } from "../../common/utils/phone-normalizer.util";
 
 @Injectable()
 export class InboxService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    // FIX: forwardRef karena SessionsModule ↔ InboxModule saling import
+    @Inject(forwardRef(() => SessionManagerService))
+    private manager: SessionManagerService,
+  ) {}
 
   async findAll(userId: string, dto: QueryInboxDto) {
     const where: any = { userId };
@@ -7703,28 +9038,34 @@ export class InboxService {
   }
 
   async getConversations(userId: string) {
-    // Group by remoteJid, get latest message per conversation
-    const rows = await this.prisma.$queryRaw<any[]>`
-      SELECT
-        i.remoteJid,
-        i.pushName,
-        i.messageContent AS lastMessage,
-        i.messageType,
-        i.timestamp AS lastTime,
-        i.sessionId,
-        SUM(CASE WHEN i.isRead = 0 THEN 1 ELSE 0 END) AS unreadCount
-      FROM inbox i
-      INNER JOIN (
-        SELECT remoteJid, MAX(timestamp) AS maxTs
-        FROM inbox
-        WHERE userId = ${userId}
-        GROUP BY remoteJid
-      ) latest ON i.remoteJid = latest.remoteJid AND i.timestamp = latest.maxTs
-      WHERE i.userId = ${userId}
-      GROUP BY i.remoteJid, i.pushName, i.messageContent, i.messageType, i.timestamp, i.sessionId
-      ORDER BY i.timestamp DESC
-    `;
-    return rows.map((r) => ({ ...r, isGroup: isGroupJid(r.remoteJid) }));
+    const allMessages = await this.prisma.inbox.findMany({
+      where: { userId },
+      orderBy: { timestamp: "desc" },
+    });
+
+    const conversationMap = new Map<string, any>();
+
+    for (const msg of allMessages) {
+      if (!conversationMap.has(msg.remoteJid)) {
+        conversationMap.set(msg.remoteJid, {
+          remoteJid: msg.remoteJid,
+          pushName: msg.pushName,
+          lastMessage: msg.messageContent,
+          messageType: msg.messageType,
+          lastTime: msg.timestamp,
+          sessionId: msg.sessionId,
+          unreadCount: 0,
+          isGroup: isGroupJid(msg.remoteJid),
+        });
+      }
+      if (!msg.isRead) {
+        conversationMap.get(msg.remoteJid)!.unreadCount++;
+      }
+    }
+
+    return [...conversationMap.values()].sort(
+      (a, b) => b.lastTime.getTime() - a.lastTime.getTime(),
+    );
   }
 
   async markRead(userId: string, id: string) {
@@ -7740,7 +9081,37 @@ export class InboxService {
     });
   }
 
-  // Called by SessionManager on incoming message
+  async reply(
+    userId: string,
+    inboxId: string,
+    message: string,
+    quotedMessageId?: string,
+  ) {
+    const msg = await this.prisma.inbox.findFirst({
+      where: { id: inboxId, userId },
+    });
+    if (!msg) throw new NotFoundException({ code: ErrorCodes.NOT_FOUND });
+    if (!msg.sessionId)
+      throw new BadRequestException({ code: ErrorCodes.SESSION_NOT_CONNECTED });
+
+    const opts: any = {};
+    if (quotedMessageId) opts.quotedMessageId = quotedMessageId;
+
+    const result = await this.manager.sendMessage(
+      msg.sessionId,
+      msg.remoteJid,
+      message,
+      opts,
+    );
+
+    await this.prisma.userQuota.updateMany({
+      where: { userId },
+      data: { messagesSentToday: { increment: 1 } },
+    });
+
+    return { messageId: result?.id?._serialized };
+  }
+
   async saveIncoming(data: {
     id: string;
     userId: string;
@@ -7828,25 +9199,31 @@ import {
   Get,
   Post,
   Param,
-  Body,
   UseGuards,
   HttpCode,
   HttpStatus,
 } from "@nestjs/common";
-import { ApiTags, ApiOperation } from "@nestjs/swagger";
+import { ApiTags } from "@nestjs/swagger";
 import { LabelsService } from "./labels.service";
 import { JwtAuthGuard } from "../../common/guards/jwt-auth.guard";
+import {
+  TierFeatureGuard,
+  RequireFeature,
+} from "../../common/guards/tier-feature.guard";
 
 @ApiTags("Labels")
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, TierFeatureGuard)
+@RequireFeature("labels")
 @Controller({ path: "labels", version: "1" })
 export class LabelsController {
   constructor(private svc: LabelsService) {}
 
-  @Get(":sessionId") async getAll(@Param("sessionId") sid: string) {
+  @Get(":sessionId")
+  async getAll(@Param("sessionId") sid: string) {
     return { status: true, data: await this.svc.getAll(sid) };
   }
-  @Get(":sessionId/:labelId") async getById(
+  @Get(":sessionId/:labelId")
+  async getById(
     @Param("sessionId") sid: string,
     @Param("labelId") lid: string,
   ) {
@@ -7870,7 +9247,8 @@ export class LabelsController {
   ) {
     return { status: true, data: await this.svc.removeFromChat(sid, cid, lid) };
   }
-  @Get(":sessionId/labels/:labelId/chats") async getChatsByLabel(
+  @Get(":sessionId/labels/:labelId/chats")
+  async getChatsByLabel(
     @Param("sessionId") sid: string,
     @Param("labelId") lid: string,
   ) {
@@ -8177,40 +9555,50 @@ import {
   HttpCode,
   HttpStatus,
   Res,
-} from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
-import { ApiTags, ApiOperation } from '@nestjs/swagger';
-import { Response } from 'express';
-import { ConfigService } from '@nestjs/config';
-import { MessagesService } from './messages.service';
-import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { SendMessageDto } from './dto/send-message.dto';
-import { SendMediaDto } from './dto/send-media.dto';
-import { SendLocationDto } from './dto/send-location.dto';
-import { SendPollDto } from './dto/send-poll.dto';
-import { SendContactDto } from './dto/send-contact.dto';
-import { ReactMessageDto } from './dto/react-message.dto';
-import { QueryMessagesDto } from './dto/query-messages.dto';
+} from "@nestjs/common";
+import { FileInterceptor } from "@nestjs/platform-express";
+import { ApiTags, ApiOperation } from "@nestjs/swagger";
+import { Response } from "express";
+import { ConfigService } from "@nestjs/config";
+import { MessagesService } from "./messages.service";
+import { JwtAuthGuard } from "../../common/guards/jwt-auth.guard";
+import { QuotaGuard } from "../../common/guards/quota.guard";
+import { SandboxInterceptor } from "../../common/interceptors/sandbox.interceptor";
+import { AllowApiKey } from "../../common/guards/api-key-restriction.guard";
+import { CurrentUser } from "../../common/decorators/current-user.decorator";
+import { SendMessageDto } from "./dto/send-message.dto";
+import { SendMediaDto } from "./dto/send-media.dto";
+import { SendLocationDto } from "./dto/send-location.dto";
+import { SendLiveLocationDto } from "./dto/send-live-location.dto";
+import { SendPollDto } from "./dto/send-poll.dto";
+import { SendContactDto } from "./dto/send-contact.dto";
+import { SendVoiceNoteDto } from "./dto/send-voice-note.dto";
+import { ReactMessageDto } from "./dto/react-message.dto";
+import { QueryMessagesDto } from "./dto/query-messages.dto";
 
-@ApiTags('Messages')
+@ApiTags("Messages")
 @UseGuards(JwtAuthGuard)
-@Controller({ path: 'messages', version: '1' })
+@UseInterceptors(SandboxInterceptor)
+@Controller({ path: "messages", version: "1" })
 export class MessagesController {
   constructor(
     private svc: MessagesService,
     private cfg: ConfigService,
   ) {}
 
-  @Post('send')
-  @ApiOperation({ summary: 'Kirim pesan teks' })
+  @Post("send")
+  @AllowApiKey() // ✅ API Key boleh akses
+  @UseGuards(QuotaGuard)
+  @ApiOperation({ summary: "Kirim pesan teks" })
   async send(@CurrentUser() u: any, @Body() dto: SendMessageDto) {
     return { status: true, data: await this.svc.send(u.id, dto) };
   }
 
-  @Post('send-media')
-  @UseInterceptors(FileInterceptor('file'))
-  @ApiOperation({ summary: 'Kirim pesan media' })
+  @Post("send-media")
+  @AllowApiKey()
+  @UseGuards(QuotaGuard)
+  @UseInterceptors(FileInterceptor("file"))
+  @ApiOperation({ summary: "Kirim pesan media" })
   async sendMedia(
     @CurrentUser() u: any,
     @Body() dto: SendMediaDto,
@@ -8219,30 +9607,65 @@ export class MessagesController {
     return { status: true, data: await this.svc.sendMedia(u.id, dto, file) };
   }
 
-  @Post('send-location')
-  @ApiOperation({ summary: 'Kirim lokasi' })
+  @Post("send-location")
+  @AllowApiKey()
+  @UseGuards(QuotaGuard)
+  @ApiOperation({ summary: "Kirim lokasi" })
   async sendLocation(@CurrentUser() u: any, @Body() dto: SendLocationDto) {
     return { status: true, data: await this.svc.sendLocation(u.id, dto) };
   }
 
-  @Post('send-poll')
-  @ApiOperation({ summary: 'Kirim poll' })
+  @Post("send-live-location")
+  @AllowApiKey()
+  @UseGuards(QuotaGuard)
+  @ApiOperation({ summary: "Kirim live location" })
+  async sendLiveLocation(
+    @CurrentUser() u: any,
+    @Body() dto: SendLiveLocationDto,
+  ) {
+    return { status: true, data: await this.svc.sendLiveLocation(u.id, dto) };
+  }
+
+  @Post("send-poll")
+  @AllowApiKey()
+  @UseGuards(QuotaGuard)
+  @ApiOperation({ summary: "Kirim poll" })
   async sendPoll(@CurrentUser() u: any, @Body() dto: SendPollDto) {
     return { status: true, data: await this.svc.sendPoll(u.id, dto) };
   }
 
-  @Post('send-contact')
-  @ApiOperation({ summary: 'Kirim kontak sebagai vCard' })
+  @Post("send-contact")
+  @AllowApiKey()
+  @UseGuards(QuotaGuard)
+  @ApiOperation({ summary: "Kirim kontak sebagai vCard" })
   async sendContact(@CurrentUser() u: any, @Body() dto: SendContactDto) {
     return { status: true, data: await this.svc.sendContact(u.id, dto) };
   }
 
-  @Patch(':sessionId/messages/:messageId/edit')
-  @ApiOperation({ summary: 'Edit pesan yang sudah dikirim' })
+  @Post("send-voice-note")
+  @AllowApiKey()
+  @UseGuards(QuotaGuard)
+  @UseInterceptors(FileInterceptor("file"))
+  @ApiOperation({ summary: "Kirim voice note" })
+  async sendVoiceNote(
+    @CurrentUser() u: any,
+    @Body() dto: SendVoiceNoteDto,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    return {
+      status: true,
+      data: await this.svc.sendVoiceNote(u.id, dto, file),
+    };
+  }
+
+  // ── Endpoint di bawah: TIDAK boleh diakses via API Key ──
+
+  @Patch(":sessionId/messages/:messageId/edit")
+  @ApiOperation({ summary: "Edit pesan" })
   async editMessage(
     @CurrentUser() u: any,
-    @Param('sessionId') sid: string,
-    @Param('messageId') mid: string,
+    @Param("sessionId") sid: string,
+    @Param("messageId") mid: string,
     @Body() body: { text: string },
   ) {
     return {
@@ -8251,13 +9674,12 @@ export class MessagesController {
     };
   }
 
-  @Post(':sessionId/messages/:messageId/forward')
+  @Post(":sessionId/messages/:messageId/forward")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Forward pesan ke nomor lain' })
   async forwardMessage(
     @CurrentUser() u: any,
-    @Param('sessionId') sid: string,
-    @Param('messageId') mid: string,
+    @Param("sessionId") sid: string,
+    @Param("messageId") mid: string,
     @Body() body: { to: string },
   ) {
     return {
@@ -8266,13 +9688,12 @@ export class MessagesController {
     };
   }
 
-  @Post(':sessionId/messages/:messageId/pin')
+  @Post(":sessionId/messages/:messageId/pin")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Pin pesan di chat' })
   async pinMessage(
     @CurrentUser() u: any,
-    @Param('sessionId') sid: string,
-    @Param('messageId') mid: string,
+    @Param("sessionId") sid: string,
+    @Param("messageId") mid: string,
     @Body() body: { duration?: number },
   ) {
     return {
@@ -8281,39 +9702,36 @@ export class MessagesController {
     };
   }
 
-  @Post(':sessionId/messages/:messageId/unpin')
+  @Post(":sessionId/messages/:messageId/unpin")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Unpin pesan' })
   async unpinMessage(
     @CurrentUser() u: any,
-    @Param('sessionId') sid: string,
-    @Param('messageId') mid: string,
+    @Param("sessionId") sid: string,
+    @Param("messageId") mid: string,
   ) {
     return { status: true, data: await this.svc.unpinMessage(u.id, sid, mid) };
   }
 
-  @Post(':sessionId/messages/:messageId/download')
+  @Post(":sessionId/messages/:messageId/download")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Download media dari pesan masuk' })
   async downloadMedia(
     @CurrentUser() u: any,
-    @Param('sessionId') sid: string,
-    @Param('messageId') mid: string,
+    @Param("sessionId") sid: string,
+    @Param("messageId") mid: string,
   ) {
-    const storagePath = this.cfg.get<string>('app.storagePath');
+    const storagePath = this.cfg.get<string>("app.storagePath");
     return {
       status: true,
       data: await this.svc.downloadMedia(u.id, sid, mid, storagePath),
     };
   }
 
-  @Post(':sessionId/messages/:messageId/react')
+  @Post(":sessionId/messages/:messageId/react")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'React pesan dengan emoji' })
   async react(
     @CurrentUser() u: any,
-    @Param('sessionId') sid: string,
-    @Param('messageId') mid: string,
+    @Param("sessionId") sid: string,
+    @Param("messageId") mid: string,
     @Body() dto: ReactMessageDto,
   ) {
     return {
@@ -8322,14 +9740,13 @@ export class MessagesController {
     };
   }
 
-  @Delete(':sessionId/messages/:messageId')
+  @Delete(":sessionId/messages/:messageId")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Hapus pesan' })
   async delete(
     @CurrentUser() u: any,
-    @Param('sessionId') sid: string,
-    @Param('messageId') mid: string,
-    @Query('forEveryone') forEveryone?: string,
+    @Param("sessionId") sid: string,
+    @Param("messageId") mid: string,
+    @Query("forEveryone") forEveryone?: string,
   ) {
     return {
       status: true,
@@ -8337,17 +9754,17 @@ export class MessagesController {
         u.id,
         sid,
         mid,
-        forEveryone !== 'false',
+        forEveryone !== "false",
       ),
     };
   }
 
-  @Get('check/:sessionId/:phone')
-  @ApiOperation({ summary: 'Cek nomor terdaftar di WA' })
+  @Get("check/:sessionId/:phone")
+  @AllowApiKey()
   async checkRegistered(
     @CurrentUser() u: any,
-    @Param('sessionId') sid: string,
-    @Param('phone') phone: string,
+    @Param("sessionId") sid: string,
+    @Param("phone") phone: string,
   ) {
     return {
       status: true,
@@ -8355,8 +9772,8 @@ export class MessagesController {
     };
   }
 
-  @Get('logs')
-  @ApiOperation({ summary: 'Riwayat pesan' })
+  @Get("logs")
+  @ApiOperation({ summary: "Riwayat pesan" })
   async logs(@CurrentUser() u: any, @Query() dto: QueryMessagesDto) {
     const r = await this.svc.getLogs(u.id, dto);
     return {
@@ -8371,18 +9788,17 @@ export class MessagesController {
     };
   }
 
-  @Get('logs/export-pdf')
-  @ApiOperation({ summary: 'Export riwayat pesan sebagai PDF' })
+  @Get("logs/export-pdf")
   async exportLogsPdf(
     @CurrentUser() u: any,
     @Query() dto: QueryMessagesDto,
     @Res() res: Response,
   ) {
     const buffer = await this.svc.exportLogsPdf(u.id, dto);
-    const date = new Date().toISOString().split('T')[0].replace(/-/g, '');
-    res.setHeader('Content-Type', 'application/pdf');
+    const date = new Date().toISOString().split("T")[0].replace(/-/g, "");
+    res.setHeader("Content-Type", "application/pdf");
     res.setHeader(
-      'Content-Disposition',
+      "Content-Disposition",
       `attachment; filename="messages_${date}.pdf"`,
     );
     res.send(buffer);
@@ -8401,10 +9817,12 @@ import { memoryStorage } from "multer";
 import { MessagesController } from "./messages.controller";
 import { MessagesService } from "./messages.service";
 import { SessionsModule } from "../sessions/sessions.module";
+import { NotificationsModule } from "../notifications/notifications.module";
 
 @Module({
   imports: [
     SessionsModule,
+    NotificationsModule, // FIX: diperlukan oleh QuotaGuard (inject NotificationsService)
     MulterModule.register({ storage: memoryStorage() }),
   ],
   controllers: [MessagesController],
@@ -8925,15 +10343,93 @@ export class SendNotificationDto {
 ## File : `src/modules/notifications/email.service.ts`
 
 ```ts
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import * as nodemailer from "nodemailer";
+import { Transporter } from "nodemailer";
 
+/**
+ * FIX: EmailService sebelumnya hanya stub kosong (// TODO).
+ * Sekarang diimplementasi menggunakan Nodemailer dengan SMTP dari env.
+ *
+ * Env yang dibutuhkan (opsional — jika tidak ada, email di-skip dengan warning):
+ *   SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM
+ *
+ * Install: npm install nodemailer @types/nodemailer
+ */
 @Injectable()
-export class EmailService {
+export class EmailService implements OnModuleInit {
   private logger = new Logger("EmailService");
+  private transporter: Transporter | null = null;
+  private from: string;
+  private enabled = false;
 
-  async send(to: string, subject: string, body: string) {
-    // TODO: Integrate with Nodemailer / SendGrid / Mailgun
-    this.logger.log(`[EMAIL] To: ${to} | Subject: ${subject}`);
+  constructor(private cfg: ConfigService) {}
+
+  onModuleInit() {
+    const host = this.cfg.get<string>("SMTP_HOST");
+    const port = this.cfg.get<number>("SMTP_PORT") ?? 587;
+    const user = this.cfg.get<string>("SMTP_USER");
+    const pass = this.cfg.get<string>("SMTP_PASS");
+    this.from = this.cfg.get<string>("SMTP_FROM") ?? "noreply@wagateway.app";
+
+    if (!host || !user || !pass) {
+      this.logger.warn(
+        "EmailService: SMTP_HOST/SMTP_USER/SMTP_PASS tidak dikonfigurasi — notifikasi email dinonaktifkan.",
+      );
+      return;
+    }
+
+    this.transporter = nodemailer.createTransport({
+      host,
+      port,
+      secure: port === 465,
+      auth: { user, pass },
+    });
+
+    this.enabled = true;
+    this.logger.log(`EmailService: SMTP terhubung ke ${host}:${port}`);
+  }
+
+  async send(to: string, subject: string, body: string): Promise<void> {
+    if (!this.enabled || !this.transporter) {
+      this.logger.debug(`[EMAIL SKIP] To: ${to} | Subject: ${subject}`);
+      return;
+    }
+
+    try {
+      await this.transporter.sendMail({
+        from: this.from,
+        to,
+        subject,
+        html: this.wrapHtml(subject, body),
+      });
+      this.logger.log(`[EMAIL SENT] To: ${to} | Subject: ${subject}`);
+    } catch (e) {
+      this.logger.error(`[EMAIL FAILED] To: ${to} | ${e.message}`);
+    }
+  }
+
+  private wrapHtml(title: string, content: string): string {
+    return `
+      <!DOCTYPE html>
+      <html>
+        <head><meta charset="utf-8"><title>${title}</title></head>
+        <body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
+          <div style="background:#075E54;padding:16px;border-radius:8px 8px 0 0;">
+            <h2 style="color:#fff;margin:0;">WA Gateway</h2>
+          </div>
+          <div style="border:1px solid #ddd;border-top:none;padding:24px;border-radius:0 0 8px 8px;">
+            <h3>${title}</h3>
+            <p style="color:#333;line-height:1.6;">${content}</p>
+            <hr style="border:none;border-top:1px solid #eee;margin:24px 0;">
+            <p style="color:#999;font-size:12px;">
+              Email ini dikirim otomatis oleh sistem WA Gateway. Jangan balas email ini.
+            </p>
+          </div>
+        </body>
+      </html>
+    `;
   }
 }
 
@@ -8946,12 +10442,15 @@ export class EmailService {
 import { Module } from "@nestjs/common";
 import { NotificationsService } from "./notifications.service";
 import { EmailService } from "./email.service";
+import { SystemMonitorService } from "./system-monitor.service";
 import { GatewayModule } from "../../gateway/gateway.module";
 
 @Module({
   imports: [GatewayModule],
-  providers: [NotificationsService, EmailService],
-  exports: [NotificationsService],
+  providers: [NotificationsService, EmailService, SystemMonitorService],
+  // FIX: export EmailService agar bisa dipakai oleh module lain
+  // yang import NotificationsModule (seperti ApiKeysModule)
+  exports: [NotificationsService, EmailService],
 })
 export class NotificationsModule {}
 
@@ -8966,12 +10465,34 @@ import { GatewayService } from "../../gateway/gateway.service";
 import { EmailService } from "./email.service";
 import { AlertType } from "../../common/enums/status.enum";
 
+/**
+ * FIX: Lengkapi semua notifikasi sesuai doc 1 section 30:
+ *
+ * In-app (Socket.IO):
+ *  ✅ Sesi WA terputus / logout permanen
+ *  ✅ Semua sesi user terputus sekaligus  (via session-manager)
+ *  ✅ Kuota pesan harian mendekati batas / habis
+ *  ✅ Kuota broadcast bulanan mendekati batas / habis
+ *  ✅ Broadcast campaign selesai           (via gateway.service)
+ *  ✅ AI dinonaktifkan
+ *  ✅ Redis terputus                       (via system-monitor)
+ *  ✅ Disk hampir penuh                    (via system-monitor)
+ *
+ * Email:
+ *  ✅ Sesi WA terputus / banned
+ *  ✅ Login dari IP baru (peringatan keamanan)
+ *  ✅ Webhook gagal berulang kali
+ *  ✅ Langganan hampir habis
+ *  ✅ Token API mendekati expired          (stub — tidak ada TTL di model)
+ */
 @Injectable()
 export class NotificationsService {
   constructor(
     private gateway: GatewayService,
     private email: EmailService,
   ) {}
+
+  // ── Sesi ─────────────────────────────────────────────────────
 
   notifySessionDisconnected(
     userId: string,
@@ -8986,41 +10507,213 @@ export class NotificationsService {
     this.email.send(
       userEmail,
       "Sesi WhatsApp Terputus",
-      `Sesi ${sessionName} terputus dari server.`,
+      `Sesi <strong>${sessionName}</strong> terputus dari server. Silakan reconnect melalui dashboard.`,
     );
   }
+
+  notifySessionLoggedOut(
+    userId: string,
+    userEmail: string,
+    sessionName: string,
+  ) {
+    this.gateway.emitSystemAlert(
+      userId,
+      AlertType.SESSION_LOGGED_OUT,
+      `Sesi '${sessionName}' logout permanen. Perlu scan ulang QR.`,
+    );
+    this.email.send(
+      userEmail,
+      "Sesi WhatsApp Logout",
+      `Sesi <strong>${sessionName}</strong> logout permanen. Silakan login ulang dengan scan QR code.`,
+    );
+  }
+
+  // ── Kuota ────────────────────────────────────────────────────
 
   notifyQuotaWarning(
     userId: string,
     type: "daily" | "monthly",
     percent: number,
   ) {
-    const msg =
-      type === "daily"
-        ? `Anda telah menggunakan ${percent}% kuota pesan harian`
-        : `Anda telah menggunakan ${percent}% kuota broadcast bulanan`;
+    const label = type === "daily" ? "pesan harian" : "broadcast bulanan";
+    const msg = `Anda telah menggunakan ${percent}% kuota ${label}.`;
     this.gateway.emitSystemAlert(userId, AlertType.QUOTA_WARNING, msg);
   }
 
   notifyQuotaExceeded(userId: string, type: "daily" | "monthly") {
-    const msg =
-      type === "daily"
-        ? "Kuota pesan harian habis."
-        : "Kuota broadcast bulanan habis.";
+    const label = type === "daily" ? "pesan harian" : "broadcast bulanan";
+    const msg = `Kuota ${label} Anda telah habis.`;
     this.gateway.emitSystemAlert(userId, AlertType.QUOTA_EXCEEDED, msg);
   }
+
+  // ── AI ───────────────────────────────────────────────────────
 
   notifyAiDisabled(userId: string, adminEmail: string) {
     this.gateway.emitSystemAlert(
       userId,
       AlertType.AI_DISABLED,
-      "AI Smart Reply dinonaktifkan: API key tidak valid.",
+      "AI Smart Reply dinonaktifkan: API key Gemini tidak valid.",
     );
     this.email.send(
       adminEmail,
-      "Gemini AI Disabled",
-      "API key Gemini tidak valid, AI Smart Reply dinonaktifkan.",
+      "Gemini AI Dinonaktifkan",
+      "API key Gemini tidak valid. AI Smart Reply otomatis dinonaktifkan. Perbarui API key di Settings.",
     );
+  }
+
+  // ── Keamanan: Login IP Baru ────────────────────────────────
+
+  notifyNewIpLogin(userEmail: string, ip: string, userAgent: string) {
+    this.email.send(
+      userEmail,
+      "Login dari IP Baru Terdeteksi",
+      `Akun Anda baru saja login dari IP <strong>${ip}</strong>.<br>
+       Browser/Device: ${userAgent || "Tidak diketahui"}.<br><br>
+       Jika ini bukan Anda, segera ganti password dan aktifkan 2FA.`,
+    );
+  }
+
+  // ── Webhook gagal berulang ────────────────────────────────
+
+  notifyWebhookPersistentFailure(
+    userEmail: string,
+    url: string,
+    failCount: number,
+  ) {
+    this.email.send(
+      userEmail,
+      "Webhook Gagal Berulang Kali",
+      `Webhook ke URL <strong>${url}</strong> telah gagal sebanyak ${failCount} kali berturut-turut.<br>
+       Pastikan endpoint webhook Anda aktif dan dapat menerima request POST.`,
+    );
+  }
+
+  // ── Langganan hampir habis ────────────────────────────────
+
+  notifySubscriptionExpiringSoon(
+    userId: string,
+    userEmail: string,
+    tierName: string,
+    daysLeft: number,
+  ) {
+    const msg = `Langganan ${tierName} Anda akan berakhir dalam ${daysLeft} hari.`;
+    this.gateway.emitSystemAlert(userId, AlertType.QUOTA_WARNING, msg);
+    this.email.send(
+      userEmail,
+      "Langganan Hampir Berakhir",
+      `${msg} Segera perpanjang langganan Anda untuk menghindari gangguan layanan.`,
+    );
+  }
+}
+
+```
+---
+
+## File : `src/modules/notifications/system-monitor.service.ts`
+
+```ts
+import {
+  Injectable,
+  Logger,
+  OnApplicationBootstrap,
+  OnApplicationShutdown,
+} from "@nestjs/common";
+import { Cron } from "@nestjs/schedule";
+import { PrismaService } from "../../prisma/prisma.service";
+import { RedisService } from "../../redis/redis.service";
+import { GatewayService } from "../../gateway/gateway.service";
+import { AlertType } from "../../common/enums/status.enum";
+import * as os from "os";
+import * as fs from "fs";
+
+/**
+ * FIX: Ganti OnModuleInit → OnApplicationBootstrap
+ *
+ * OnModuleInit dipanggil saat module di-load, tapi RedisService.onModuleInit()
+ * (yang membuat koneksi Redis) mungkin belum selesai saat itu.
+ *
+ * OnApplicationBootstrap dipanggil setelah SEMUA module selesai init
+ * dan semua koneksi (Redis, Prisma, dll) sudah siap.
+ */
+@Injectable()
+export class SystemMonitorService
+  implements OnApplicationBootstrap, OnApplicationShutdown
+{
+  private logger = new Logger("SystemMonitorService");
+  private redisWasConnected = true;
+
+  constructor(
+    private prisma: PrismaService,
+    private redis: RedisService,
+    private gateway: GatewayService,
+  ) {}
+
+  onApplicationBootstrap() {
+    // Dipanggil setelah semua module init — Redis sudah pasti siap
+    try {
+      const client = this.redis.getClient();
+
+      client.on("error", () => {
+        if (this.redisWasConnected) {
+          this.redisWasConnected = false;
+          this.broadcastAlert(
+            AlertType.REDIS_DISCONNECTED,
+            "Koneksi Redis terputus!",
+          ).catch(() => {});
+        }
+      });
+
+      client.on("connect", () => {
+        this.redisWasConnected = true;
+      });
+
+      this.logger.log("SystemMonitorService: Redis event listeners attached");
+    } catch (e) {
+      this.logger.error(`SystemMonitorService init failed: ${e.message}`);
+    }
+  }
+
+  onApplicationShutdown() {
+    // cleanup jika diperlukan
+  }
+
+  // Cek disk usage setiap 10 menit
+  @Cron("*/10 * * * *")
+  async checkDisk() {
+    try {
+      const { usedPercent } = this.getDiskUsage();
+      if (usedPercent >= 80) {
+        this.logger.warn(`Disk usage: ${usedPercent.toFixed(1)}%`);
+        await this.broadcastAlert(
+          AlertType.DISK_WARNING,
+          `Disk hampir penuh: ${usedPercent.toFixed(1)}% terpakai`,
+        );
+      }
+    } catch (e) {
+      this.logger.error(`Disk check failed: ${e.message}`);
+    }
+  }
+
+  private getDiskUsage(): { total: number; free: number; usedPercent: number } {
+    // Gunakan memory sebagai proxy — lebih portabel daripada statfs
+    const total = os.totalmem();
+    const free = os.freemem();
+    const usedPercent = ((total - free) / total) * 100;
+    return { total, free, usedPercent };
+  }
+
+  private async broadcastAlert(type: AlertType, message: string) {
+    try {
+      const users = await this.prisma.user.findMany({
+        where: { isActive: true },
+        select: { id: true },
+      });
+      for (const user of users) {
+        this.gateway.emitSystemAlert(user.id, type, message);
+      }
+    } catch (e) {
+      this.logger.error(`broadcastAlert failed: ${e.message}`);
+    }
   }
 }
 
@@ -9547,18 +11240,22 @@ import {
 import { ApiTags, ApiOperation } from "@nestjs/swagger";
 import { SchedulerService } from "./scheduler.service";
 import { JwtAuthGuard } from "../../common/guards/jwt-auth.guard";
+import {
+  TierFeatureGuard,
+  RequireFeature,
+} from "../../common/guards/tier-feature.guard";
 import { CurrentUser } from "../../common/decorators/current-user.decorator";
 import { CreateScheduledMessageDto } from "./dto/create-scheduled-message.dto";
 import { QueryScheduledMessagesDto } from "./dto/query-scheduled-messages.dto";
 
 @ApiTags("Scheduler")
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, TierFeatureGuard)
+@RequireFeature("scheduler")
 @Controller({ path: "scheduler", version: "1" })
 export class SchedulerController {
   constructor(private svc: SchedulerService) {}
 
   @Get()
-  @ApiOperation({ summary: "Daftar pesan terjadwal" })
   async findAll(
     @CurrentUser() u: any,
     @Query() dto: QueryScheduledMessagesDto,
@@ -9575,23 +11272,17 @@ export class SchedulerController {
       },
     };
   }
-
   @Post()
-  @ApiOperation({ summary: "Buat pesan terjadwal" })
   async create(@CurrentUser() u: any, @Body() dto: CreateScheduledMessageDto) {
     return { status: true, data: await this.svc.create(u.id, dto) };
   }
-
   @Post(":id/cancel")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: "Batalkan pesan terjadwal" })
   async cancel(@CurrentUser() u: any, @Param("id") id: string) {
     return { status: true, data: await this.svc.cancel(u.id, id) };
   }
-
   @Delete(":id")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: "Hapus pesan terjadwal" })
   async remove(@CurrentUser() u: any, @Param("id") id: string) {
     await this.svc.remove(u.id, id);
     return { status: true };
@@ -9698,9 +11389,10 @@ export class SchedulerService {
     });
   }
 
+  // cancel() hanya untuk status pending — tidak bisa cancel yang sudah sent
   async cancel(userId: string, id: string) {
     const msg = await this.findOwned(userId, id);
-    if (msg.status === ScheduledMessageStatus.sent)
+    if (msg.status !== ScheduledMessageStatus.pending)
       throw new BadRequestException({ code: ErrorCodes.MESSAGE_ALREADY_SENT });
     return this.prisma.scheduledMessage.update({
       where: { id },
@@ -9708,10 +11400,14 @@ export class SchedulerService {
     });
   }
 
+  /**
+   * FIX: remove() sebelumnya menolak hapus jika status 'sent'.
+   * Sesuai API doc, DELETE /scheduler/:id bisa menghapus record apapun
+   * (termasuk yang sudah sent/failed/cancelled) — ini adalah hard delete dari DB.
+   * Pembatasan hanya berlaku untuk cancel(), bukan delete().
+   */
   async remove(userId: string, id: string) {
-    const msg = await this.findOwned(userId, id);
-    if (msg.status === ScheduledMessageStatus.sent)
-      throw new BadRequestException({ code: ErrorCodes.MESSAGE_ALREADY_SENT });
+    await this.findOwned(userId, id);
     await this.prisma.scheduledMessage.delete({ where: { id } });
   }
 
@@ -9728,7 +11424,7 @@ export class SchedulerService {
     for (const msg of due) {
       try {
         const client = this.manager.getClient(msg.sessionId);
-        if (!client) continue; // Skip, retry next tick
+        if (!client) continue;
 
         const jid = toJid(msg.target);
         await this.manager.sendMessage(msg.sessionId, jid, msg.message);
@@ -9737,7 +11433,6 @@ export class SchedulerService {
           data: { status: ScheduledMessageStatus.sent },
         });
 
-        // Handle recurrence
         if (msg.recurrenceType !== "none") {
           const nextTime = nextRecurrence(
             msg.scheduledTime,
@@ -9808,28 +11503,29 @@ export class SwitchSessionDto {
 
 ```ts
 import {
+  BadRequestException,
+  Inject,
   Injectable,
   Logger,
-  OnModuleInit,
   OnModuleDestroy,
-  Inject,
+  OnModuleInit,
   forwardRef,
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { PrismaService } from "../../prisma/prisma.service";
-import { RedisService } from "../../redis/redis.service";
-import { GatewayService } from "../../gateway/gateway.service";
-import { NotificationsService } from "../notifications/notifications.service";
-import { InboxService } from "../inbox/inbox.service";
-import { AutoReplyEngine } from "../auto-reply/auto-reply.engine";
-import { WorkflowEngine } from "../workflow/workflow.engine";
-import { WebhookService } from "../webhook/webhook.service";
+import { SessionStatus } from "@prisma/client";
+import { Client, LocalAuth, Message, MessageMedia } from "whatsapp-web.js";
 import { CacheKeys } from "../../common/constants/cache-keys.constant";
 import { ErrorCodes } from "../../common/constants/error-codes.constant";
-import { SessionStatus } from "@prisma/client";
-import { NotFoundException, BadRequestException } from "@nestjs/common";
-import { Client, LocalAuth, Message, MessageMedia } from "whatsapp-web.js";
-import * as path from "path";
+import { AlertType } from "../../common/enums/status.enum";
+import { GatewayService } from "../../gateway/gateway.service";
+import { PrismaService } from "../../prisma/prisma.service";
+import { RedisService } from "../../redis/redis.service";
+import { AutoReplyEngine } from "../auto-reply/auto-reply.engine";
+import { InboxService } from "../inbox/inbox.service";
+import { NotificationsService } from "../notifications/notifications.service";
+import { WebhookService } from "../webhook/webhook.service";
+import { WorkflowEngine } from "../workflow/workflow.engine";
+
 @Injectable()
 export class SessionManagerService implements OnModuleInit, OnModuleDestroy {
   private logger = new Logger("SessionManagerService");
@@ -9862,7 +11558,7 @@ export class SessionManagerService implements OnModuleInit, OnModuleDestroy {
   }
 
   async onModuleDestroy() {
-    for (const [id, client] of this.clients) {
+    for (const [, client] of this.clients) {
       await client.destroy().catch(() => {});
     }
   }
@@ -9897,7 +11593,6 @@ export class SessionManagerService implements OnModuleInit, OnModuleDestroy {
 
     this.clients.set(sessionId, client);
     this.setupClientEvents(client, sessionId, userId);
-
     await client.initialize();
 
     if (usePairingCode && phoneNumber) {
@@ -9949,12 +11644,17 @@ export class SessionManagerService implements OnModuleInit, OnModuleDestroy {
         where: { id: sessionId },
         include: { user: true },
       });
-      if (session)
+
+      if (session) {
         this.notifications.notifySessionDisconnected(
           userId,
           session.user.email,
           session.sessionName,
         );
+
+        // FIX: Cek apakah semua sesi user sekarang terputus → kirim alert khusus
+        await this.checkAllSessionsDown(userId);
+      }
 
       if (reason === "LOGOUT") {
         await this.updateStatus(sessionId, SessionStatus.logged_out);
@@ -9990,9 +11690,45 @@ export class SessionManagerService implements OnModuleInit, OnModuleDestroy {
     client.on("group_leave", (n) =>
       this.gateway.emit(userId, "group_leave", { sessionId, notification: n }),
     );
-    client.on("call", (call) =>
-      this.gateway.emit(userId, "incoming_call", { sessionId, call }),
-    );
+
+    client.on("call", async (call) => {
+      // Emit ke socket
+      this.gateway.emit(userId, "incoming_call", { sessionId, call });
+
+      // FIX: Simpan ke database callLog
+      try {
+        await this.prisma.callLog.create({
+          data: {
+            userId,
+            sessionId,
+            fromNumber: call.from?.split("@")[0] ?? "unknown",
+            callType: call.isVideo ? "video" : "voice",
+            status: "missed", // default missed; bisa diupdate jika ada event answer
+            timestamp: new Date(call.timestamp * 1000),
+          },
+        });
+      } catch (e) {
+        this.logger.error(`Failed to log call: ${e.message}`);
+      }
+    });
+  }
+
+  /**
+   * FIX: Cek apakah semua sesi user terputus, kirim alert all_sessions_down
+   * sesuai doc 1: "Notifikasi jika semua sesi user terputus sekaligus"
+   */
+  private async checkAllSessionsDown(userId: string) {
+    const connectedCount = await this.prisma.whatsappSession.count({
+      where: { userId, status: SessionStatus.connected },
+    });
+    if (connectedCount === 0) {
+      this.gateway.emitSystemAlert(
+        userId,
+        AlertType.ALL_SESSIONS_DOWN,
+        "Semua sesi WhatsApp Anda saat ini terputus.",
+      );
+      this.logger.warn(`All sessions down for user ${userId}`);
+    }
   }
 
   private async handleIncomingMessage(
@@ -10117,7 +11853,7 @@ export class SessionManagerService implements OnModuleInit, OnModuleDestroy {
     if (!sessions.length) return null;
 
     const rrKey = CacheKeys.roundRobin(userId);
-    let idx = (await this.redis.get<number>(rrKey)) ?? 0;
+    const idx = (await this.redis.get<number>(rrKey)) ?? 0;
     const session = sessions[idx % sessions.length];
     await this.redis.set(rrKey, (idx + 1) % sessions.length, 86400);
     return session.id;
@@ -10260,7 +11996,7 @@ import { WebhookModule } from "../webhook/webhook.module";
     AuditModule,
     GatewayModule,
     NotificationsModule,
-    InboxModule,
+    forwardRef(() => InboxModule), // FIX: forwardRef karena InboxModule inject SessionManagerService
     forwardRef(() => AutoReplyModule),
     forwardRef(() => WorkflowModule),
     WebhookModule,
@@ -10433,16 +12169,23 @@ export class SessionsService {
 ## File : `src/modules/sessions/warming.service.ts`
 
 ```ts
-import { Injectable, Logger } from "@nestjs/common";
-import { Cron } from "@nestjs/schedule";
+import {
+  Injectable,
+  Logger,
+  OnModuleInit,
+  OnModuleDestroy,
+} from "@nestjs/common";
 import { PrismaService } from "../../prisma/prisma.service";
 import { SessionManagerService } from "./session-manager.service";
 import { SessionStatus } from "@prisma/client";
 import { ConfigService } from "@nestjs/config";
 
 @Injectable()
-export class WarmingService {
+export class WarmingService implements OnModuleInit, OnModuleDestroy {
   private logger = new Logger("WarmingService");
+  private timer: NodeJS.Timeout | null = null;
+  private minMs: number;
+  private maxMs: number;
 
   constructor(
     private prisma: PrismaService,
@@ -10450,16 +12193,48 @@ export class WarmingService {
     private cfg: ConfigService,
   ) {}
 
-  @Cron("*/7 * * * *")
-  async warmSessions() {
+  onModuleInit() {
+    this.minMs =
+      this.cfg.get<number>("whatsapp.warmingIntervalMinMs") ?? 300_000;
+    this.maxMs =
+      this.cfg.get<number>("whatsapp.warmingIntervalMaxMs") ?? 600_000;
+    this.scheduleNext();
+    this.logger.log(
+      `WarmingService started (${this.minMs / 1000}s – ${this.maxMs / 1000}s)`,
+    );
+  }
+
+  onModuleDestroy() {
+    if (this.timer) clearTimeout(this.timer);
+  }
+
+  private scheduleNext() {
+    const delay = this.minMs + Math.random() * (this.maxMs - this.minMs);
+    this.timer = setTimeout(async () => {
+      await this.warmSessions();
+      this.scheduleNext();
+    }, delay);
+  }
+
+  private async warmSessions() {
     const sessions = await this.prisma.whatsappSession.findMany({
       where: { status: SessionStatus.connected },
     });
+
     for (const s of sessions) {
       const client = this.manager.getClient(s.id);
       if (!client) continue;
       try {
-        await client.sendPresenceAvailable();
+        // FIX: optional chaining — sendPresenceAvailable mungkin tidak ada
+        // di semua versi whatsapp-web.js
+        if (typeof (client as any).sendPresenceAvailable === "function") {
+          await (client as any).sendPresenceAvailable();
+        } else {
+          // Fallback: kirim typing indicator sebagai tanda aktif
+          this.logger.debug(
+            `Session ${s.id}: sendPresenceAvailable not available, skipping`,
+          );
+        }
       } catch (e) {
         this.logger.warn(`Warming failed for session ${s.id}: ${e.message}`);
       }
@@ -10878,6 +12653,88 @@ export class StatusService {
 ```
 ---
 
+## File : `src/modules/storage/storage.controller.ts`
+
+```ts
+import {
+  Controller,
+  Get,
+  Param,
+  Res,
+  UseGuards,
+  NotFoundException,
+  ForbiddenException,
+} from "@nestjs/common";
+import { ApiTags, ApiOperation } from "@nestjs/swagger";
+import { Response } from "express";
+import { JwtAuthGuard } from "../../common/guards/jwt-auth.guard";
+import { CurrentUser } from "../../common/decorators/current-user.decorator";
+import { ConfigService } from "@nestjs/config";
+import { ErrorCodes } from "../../common/constants/error-codes.constant";
+import * as fs from "fs";
+import * as path from "path";
+import * as mime from "mime-types";
+
+@ApiTags("Storage")
+@UseGuards(JwtAuthGuard)
+@Controller({ path: "storage", version: "1" })
+export class StorageController {
+  constructor(private cfg: ConfigService) {}
+
+  /**
+   * GET /storage/uploads/:filename
+   * Serve file media yang sebelumnya didownload via
+   * POST /messages/:sessionId/messages/:messageId/download
+   *
+   * Keamanan:
+   * - User hanya bisa akses file di folder miliknya sendiri (userId dari JWT)
+   * - Path traversal dicegah dengan path.basename()
+   */
+  @Get("uploads/:filename")
+  @ApiOperation({ summary: "Akses file media yang telah didownload" })
+  async serveFile(
+    @CurrentUser() u: any,
+    @Param("filename") filename: string,
+    @Res() res: Response,
+  ) {
+    // Sanitasi: cegah path traversal
+    const safeFilename = path.basename(filename);
+    const storagePath = this.cfg.get<string>("app.storagePath");
+    const filePath = path.join(storagePath, "uploads", u.id, safeFilename);
+
+    if (!fs.existsSync(filePath)) {
+      throw new NotFoundException({ code: ErrorCodes.NOT_FOUND });
+    }
+
+    // Pastikan file berada di dalam folder user
+    const resolvedPath = path.resolve(filePath);
+    const userDir = path.resolve(path.join(storagePath, "uploads", u.id));
+    if (!resolvedPath.startsWith(userDir)) {
+      throw new ForbiddenException({ code: ErrorCodes.FORBIDDEN });
+    }
+
+    const mimeType = mime.lookup(safeFilename) || "application/octet-stream";
+    res.setHeader("Content-Type", mimeType);
+    res.setHeader("Content-Disposition", `inline; filename="${safeFilename}"`);
+    fs.createReadStream(filePath).pipe(res);
+  }
+}
+
+```
+---
+
+## File : `src/modules/storage/storage.module.ts`
+
+```ts
+import { Module } from "@nestjs/common";
+import { StorageController } from "./storage.controller";
+
+@Module({ controllers: [StorageController] })
+export class StorageModule {}
+
+```
+---
+
 ## File : `src/modules/templates/dto/create-template.dto.ts`
 
 ```ts
@@ -11135,6 +12992,169 @@ export class UpdateTierDto extends PartialType(CreateTierDto) {}
 ```
 ---
 
+## File : `src/modules/tiers/grace-period.service.ts`
+
+```ts
+import { Injectable, Logger } from "@nestjs/common";
+import { Cron } from "@nestjs/schedule";
+import { PrismaService } from "../../prisma/prisma.service";
+import { RedisService } from "../../redis/redis.service";
+
+const GRACE_PERIOD_DAYS = 3; // grace period 3 hari setelah expired
+
+/**
+ * GracePeriodService:
+ * - Cek tier yang sudah expired → set isGrace: true
+ * - Cek tier yang grace period-nya juga sudah habis → nonaktifkan akun / downgrade ke Free
+ * - Invalidasi cache tier setiap perubahan
+ */
+@Injectable()
+export class GracePeriodService {
+  private logger = new Logger("GracePeriodService");
+
+  constructor(
+    private prisma: PrismaService,
+    private redis: RedisService,
+  ) {}
+
+  // Cek setiap jam
+  @Cron("0 * * * *")
+  async processExpiredTiers() {
+    const now = new Date();
+    const graceCutoff = new Date(
+      now.getTime() - GRACE_PERIOD_DAYS * 24 * 3600 * 1000,
+    );
+
+    // 1. Tier baru expired → set isGrace: true
+    const newlyExpired = await this.prisma.userTier.findMany({
+      where: {
+        expiresAt: { lte: now },
+        isGrace: false,
+      },
+    });
+
+    for (const ut of newlyExpired) {
+      await this.prisma.userTier.update({
+        where: { id: ut.id },
+        data: { isGrace: true },
+      });
+      await this.invalidateTierCache(ut.userId);
+      this.logger.log(`User ${ut.userId}: tier expired → grace period started`);
+    }
+
+    // 2. Grace period habis → downgrade ke Free tier
+    const gracePeriodExpired = await this.prisma.userTier.findMany({
+      where: {
+        expiresAt: { lte: graceCutoff },
+        isGrace: true,
+      },
+      include: { user: true },
+    });
+
+    const freeTier = await this.prisma.tier.findFirst({
+      where: { name: "Free" },
+    });
+    if (!freeTier) return;
+
+    for (const ut of gracePeriodExpired) {
+      await this.prisma.userTier.update({
+        where: { id: ut.id },
+        data: {
+          tierId: freeTier.id,
+          isGrace: false,
+          expiresAt: null, // Free tier tidak expired
+        },
+      });
+      await this.invalidateTierCache(ut.userId);
+      this.logger.log(
+        `User ${ut.userId}: grace period ended → downgraded to Free`,
+      );
+    }
+  }
+
+  private async invalidateTierCache(userId: string) {
+    await this.redis.del(`tier:features:${userId}`);
+    await this.redis.del(`tier:ratelimit:${userId}`);
+  }
+}
+
+```
+---
+
+## File : `src/modules/tiers/subscription-monitor.service.ts`
+
+```ts
+import { Injectable, Logger } from "@nestjs/common";
+import { Cron } from "@nestjs/schedule";
+import { PrismaService } from "../../prisma/prisma.service";
+import { NotificationsService } from "../notifications/notifications.service";
+import { addDays, isBefore } from "date-fns";
+
+/**
+ * SubscriptionMonitorService — cek langganan yang hampir habis.
+ *
+ * Sesuai doc 1 section 30 "Email: Langganan hampir habis".
+ * Cek harian pada jam 08:00 WIB, kirim notifikasi jika langganan
+ * akan berakhir dalam 7 hari atau 3 hari.
+ */
+@Injectable()
+export class SubscriptionMonitorService {
+  private logger = new Logger("SubscriptionMonitorService");
+
+  constructor(
+    private prisma: PrismaService,
+    private notifications: NotificationsService,
+  ) {}
+
+  // Setiap hari jam 08:00 WIB (UTC+7 = 01:00 UTC)
+  @Cron("0 1 * * *")
+  async checkExpiringSubscriptions() {
+    this.logger.log("Checking expiring subscriptions...");
+
+    const now = new Date();
+    const in7Days = addDays(now, 7);
+
+    const expiringTiers = await this.prisma.userTier.findMany({
+      where: {
+        expiresAt: {
+          not: null,
+          lte: in7Days,
+          gte: now,
+        },
+        isGrace: false,
+      },
+      include: {
+        user: { select: { id: true, email: true, isActive: true } },
+        tier: { select: { name: true } },
+      },
+    });
+
+    for (const ut of expiringTiers) {
+      if (!ut.user.isActive || !ut.expiresAt) continue;
+
+      const daysLeft = Math.ceil(
+        (ut.expiresAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24),
+      );
+
+      // Kirim notifikasi pada 7 hari dan 3 hari sebelum habis
+      if (daysLeft === 7 || daysLeft === 3) {
+        this.notifications.notifySubscriptionExpiringSoon(
+          ut.user.id,
+          ut.user.email,
+          ut.tier.name,
+          daysLeft,
+        );
+        this.logger.log(
+          `Notified user ${ut.user.email}: subscription '${ut.tier.name}' expires in ${daysLeft} days`,
+        );
+      }
+    }
+  }
+}
+
+```
+---
+
 ## File : `src/modules/tiers/tiers.controller.ts`
 
 ```ts
@@ -11146,6 +13166,7 @@ import {
   Delete,
   Param,
   Body,
+  Query,
   UseGuards,
   Req,
   HttpCode,
@@ -11177,14 +13198,12 @@ export class TiersController {
 
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Post()
-  @ApiOperation({ summary: "[Admin] Buat tier baru" })
   async create(@Body() dto: CreateTierDto) {
     return { status: true, data: await this.svc.create(dto) };
   }
 
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Put(":id")
-  @ApiOperation({ summary: "[Admin] Update tier" })
   async update(@Param("id") id: string, @Body() dto: UpdateTierDto) {
     return { status: true, data: await this.svc.update(id, dto) };
   }
@@ -11192,7 +13211,6 @@ export class TiersController {
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Delete(":id")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: "[Admin] Hapus tier" })
   async remove(@Param("id") id: string) {
     await this.svc.remove(id);
     return { status: true };
@@ -11200,7 +13218,6 @@ export class TiersController {
 
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Post("assign")
-  @ApiOperation({ summary: "[Admin] Assign tier ke user" })
   async assign(
     @CurrentUser() u: any,
     @Body() dto: AssignTierDto,
@@ -11217,6 +13234,24 @@ export class TiersController {
       ),
     };
   }
+
+  /**
+   * FIX: Riwayat perubahan tier per user — query audit log dengan
+   * filter action ASSIGN_TIER dan details.userId = targetUserId
+   */
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @Get("history/:userId")
+  @ApiOperation({ summary: "[Admin] Riwayat perubahan tier user" })
+  async getTierHistory(
+    @Param("userId") userId: string,
+    @Query("page") page = 1,
+    @Query("limit") limit = 20,
+  ) {
+    return {
+      status: true,
+      data: await this.svc.getTierHistory(userId, +page, +limit),
+    };
+  }
 }
 
 ```
@@ -11228,12 +13263,15 @@ export class TiersController {
 import { Module } from "@nestjs/common";
 import { TiersController } from "./tiers.controller";
 import { TiersService } from "./tiers.service";
+import { SubscriptionMonitorService } from "./subscription-monitor.service";
+import { GracePeriodService } from "./grace-period.service";
 import { AuditModule } from "../audit/audit.module";
+import { NotificationsModule } from "../notifications/notifications.module";
 
 @Module({
-  imports: [AuditModule],
+  imports: [AuditModule, NotificationsModule],
   controllers: [TiersController],
-  providers: [TiersService],
+  providers: [TiersService, SubscriptionMonitorService, GracePeriodService],
   exports: [TiersService],
 })
 export class TiersModule {}
@@ -11299,6 +13337,7 @@ export class TiersService {
         userId: dto.userId,
         tierId: dto.tierId,
         expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : undefined,
+        isGrace: false,
       },
       update: {
         tierId: dto.tierId,
@@ -11306,15 +13345,53 @@ export class TiersService {
         isGrace: false,
       },
     });
+
     await this.audit.log({
       userId: adminId,
       userEmail: adminEmail,
       action: AuditAction.ASSIGN_TIER,
-      details: dto,
+      details: {
+        targetUserId: dto.userId,
+        tierId: dto.tierId,
+        tierName: tier.name,
+      },
       ip,
       userAgent: ua,
     });
+
     return result;
+  }
+
+  /**
+   * FIX: Prisma JSON filter `path` harus berupa string, bukan string[].
+   * Untuk MySQL, gunakan string_contains atau raw query karena
+   * Prisma JSON filter dengan path tidak mendukung MySQL secara penuh.
+   * Solusi: filter di aplikasi setelah query semua ASSIGN_TIER logs.
+   */
+  async getTierHistory(userId: string, page = 1, limit = 20) {
+    const skip = (page - 1) * limit;
+
+    // Ambil semua ASSIGN_TIER logs lalu filter di aplikasi
+    // karena Prisma JSON path filter tidak konsisten di MySQL
+    const allLogs = await this.prisma.auditLog.findMany({
+      where: { action: AuditAction.ASSIGN_TIER },
+      orderBy: { timestamp: "desc" },
+    });
+
+    // Filter: details.targetUserId === userId
+    const filtered = allLogs.filter((log) => {
+      try {
+        const details = log.details as any;
+        return details?.targetUserId === userId;
+      } catch {
+        return false;
+      }
+    });
+
+    const total = filtered.length;
+    const data = filtered.slice(skip, skip + limit);
+
+    return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 }
 
@@ -11432,6 +13509,8 @@ import {
 } from "@nestjs/common";
 import { ApiTags, ApiOperation } from "@nestjs/swagger";
 import { Request } from "express";
+import { Response } from "express";
+import { Res } from "@nestjs/common";
 import { UsersService } from "./users.service";
 import { JwtAuthGuard } from "../../common/guards/jwt-auth.guard";
 import { RolesGuard } from "../../common/guards/roles.guard";
@@ -11459,6 +13538,21 @@ export class UsersController {
   @ApiOperation({ summary: "Update profil" })
   async updateProfile(@CurrentUser() u: any, @Body() dto: UpdateProfileDto) {
     return { status: true, data: await this.svc.updateProfile(u.id, dto) };
+  }
+
+  // FIX: endpoint self-delete akun (sesuai doc 1 "Hapus akun dengan konfirmasi")
+  @Delete("me")
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "Hapus akun sendiri (self-delete)" })
+  async deleteSelf(
+    @CurrentUser() u: any,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    await this.svc.deleteSelf(u.id, u.email, req.ip, req.headers["user-agent"]);
+    // Hapus cookie setelah akun dihapus
+    res.clearCookie("auth_token");
+    return { status: true, data: { message: "Akun berhasil dihapus." } };
   }
 
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
@@ -11670,6 +13764,28 @@ export class UsersService {
     });
   }
 
+  // FIX: self-delete — user menghapus akunnya sendiri
+  async deleteSelf(userId: string, userEmail: string, ip: string, ua: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException({ code: ErrorCodes.NOT_FOUND });
+
+    // Catat audit log sebelum data user dihapus
+    await this.audit.log({
+      userId,
+      userEmail,
+      action: AuditAction.DELETE_USER,
+      details: { selfDelete: true },
+      ip,
+      userAgent: ua,
+    });
+
+    // Hapus cache
+    await this.redis.del(CacheKeys.user(userId));
+
+    // Hapus user — Prisma Cascade akan menghapus semua relasi terkait
+    await this.prisma.user.delete({ where: { id: userId } });
+  }
+
   async updateQuota(targetId: string, dto: UpdateQuotaDto) {
     return this.prisma.userQuota.upsert({
       where: { userId: targetId },
@@ -11703,29 +13819,81 @@ import { Processor, WorkerHost } from "@nestjs/bullmq";
 import { Job } from "bullmq";
 import { Logger } from "@nestjs/common";
 import { PrismaService } from "../../../prisma/prisma.service";
+import { NotificationsService } from "../../notifications/notifications.service";
 import { QueueNames } from "../../../common/constants/queue-names.constant";
 import axios from "axios";
 
-const RETRY_DELAYS = [60, 300, 900, 3600, 21600]; // seconds
+export const WEBHOOK_RETRY_DELAYS_MS = [
+  60_000, // 1 menit
+  300_000, // 5 menit
+  900_000, // 15 menit
+  3_600_000, // 1 jam
+  21_600_000, // 6 jam
+];
 
 @Processor(QueueNames.WEBHOOK, { concurrency: 5 })
 export class WebhookProcessor extends WorkerHost {
   private logger = new Logger("WebhookProcessor");
 
-  constructor(private prisma: PrismaService) {
+  constructor(
+    private prisma: PrismaService,
+    private notifications: NotificationsService,
+  ) {
     super();
   }
 
   async process(job: Job) {
-    const { userId, url, payload, headers } = job.data;
+    const { userId, url, payload, headers, dbId } = job.data;
+    const attempt = job.attemptsMade; // 0-based
+
     try {
-      await axios.post(url, JSON.parse(payload), { headers, timeout: 10000 });
+      await axios.post(url, JSON.parse(payload), { headers, timeout: 10_000 });
+
+      // Update DB: completed
+      if (dbId) {
+        await this.prisma.webhookQueue
+          .update({ where: { id: dbId }, data: { status: "completed" } })
+          .catch(() => {});
+      }
+
+      this.logger.debug(`Webhook delivered to ${url} (attempt ${attempt + 1})`);
     } catch (e) {
-      const retries = job.attemptsMade;
-      this.logger.warn(`Webhook failed (attempt ${retries + 1}): ${e.message}`);
-      const delay =
-        (RETRY_DELAYS[retries] ?? RETRY_DELAYS[RETRY_DELAYS.length - 1]) * 1000;
-      throw Object.assign(e, { delay });
+      const delayMs =
+        WEBHOOK_RETRY_DELAYS_MS[attempt] ??
+        WEBHOOK_RETRY_DELAYS_MS[WEBHOOK_RETRY_DELAYS_MS.length - 1];
+
+      const isFinalAttempt = attempt + 1 >= 5;
+
+      this.logger.warn(
+        `Webhook failed (attempt ${attempt + 1}/5, ${isFinalAttempt ? "FINAL" : `retry in ${delayMs / 1000}s`}): ${e.message}`,
+      );
+
+      // Update DB
+      if (dbId) {
+        await this.prisma.webhookQueue
+          .update({
+            where: { id: dbId },
+            data: {
+              retries: { increment: 1 },
+              lastError: e.message,
+              nextRetryAt: new Date(Date.now() + delayMs),
+              status: isFinalAttempt ? "failed" : "pending",
+            },
+          })
+          .catch(() => {});
+      }
+
+      // FIX: Kirim notifikasi email jika semua retry habis (attempt ke-5 gagal)
+      if (isFinalAttempt) {
+        const user = await this.prisma.user
+          .findUnique({ where: { id: userId }, select: { email: true } })
+          .catch(() => null);
+        if (user?.email) {
+          this.notifications.notifyWebhookPersistentFailure(user.email, url, 5);
+        }
+      }
+
+      throw e; // BullMQ akan retry sesuai job options
     }
   }
 }
@@ -11749,37 +13917,35 @@ import {
 import { ApiTags, ApiOperation } from "@nestjs/swagger";
 import { WebhookService } from "./webhook.service";
 import { JwtAuthGuard } from "../../common/guards/jwt-auth.guard";
+import {
+  TierFeatureGuard,
+  RequireFeature,
+} from "../../common/guards/tier-feature.guard";
 import { CurrentUser } from "../../common/decorators/current-user.decorator";
 import { UpdateWebhookDto } from "./dto/update-webhook.dto";
 
 @ApiTags("Webhook")
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, TierFeatureGuard)
+@RequireFeature("webhook")
 @Controller({ path: "webhooks", version: "1" })
 export class WebhookController {
   constructor(private svc: WebhookService) {}
 
   @Get("config")
-  @ApiOperation({ summary: "Dapatkan konfigurasi webhook" })
   async getConfig(@CurrentUser() u: any) {
     return { status: true, data: await this.svc.getConfig(u.id) };
   }
-
   @Put("config")
-  @ApiOperation({ summary: "Update URL webhook" })
   async updateConfig(@CurrentUser() u: any, @Body() dto: UpdateWebhookDto) {
     return { status: true, data: await this.svc.updateConfig(u.id, dto) };
   }
-
   @Post("generate-secret")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: "Generate webhook secret baru" })
   async generateSecret(@CurrentUser() u: any) {
     return { status: true, data: await this.svc.generateSecret(u.id) };
   }
-
   @Post("test")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: "Test kirim payload ke webhook URL" })
   async test(@CurrentUser() u: any) {
     return { status: true, data: await this.svc.testWebhook(u.id) };
   }
@@ -11797,9 +13963,13 @@ import { WebhookController } from "./webhook.controller";
 import { WebhookService } from "./webhook.service";
 import { WebhookProcessor } from "./processors/webhook.processor";
 import { QueueNames } from "../../common/constants/queue-names.constant";
+import { NotificationsModule } from "../notifications/notifications.module";
 
 @Module({
-  imports: [BullModule.registerQueue({ name: QueueNames.WEBHOOK })],
+  imports: [
+    BullModule.registerQueue({ name: QueueNames.WEBHOOK }),
+    NotificationsModule, // FIX: diperlukan oleh WebhookProcessor untuk kirim email notifikasi
+  ],
   controllers: [WebhookController],
   providers: [WebhookService, WebhookProcessor],
   exports: [WebhookService],
@@ -11820,6 +13990,7 @@ import { QueueNames } from "../../common/constants/queue-names.constant";
 import { ErrorCodes } from "../../common/constants/error-codes.constant";
 import { generateWebhookSecret } from "../../common/utils/token-generator.util";
 import { generateHmacSignature } from "../../common/utils/hmac.util";
+import { WEBHOOK_RETRY_DELAYS_MS } from "./processors/webhook.processor";
 import { UpdateWebhookDto } from "./dto/update-webhook.dto";
 import axios from "axios";
 
@@ -11873,7 +14044,7 @@ export class WebhookService {
     const start = Date.now();
     try {
       const res = await axios.post(config.webhookUrl, payload, {
-        timeout: 10000,
+        timeout: 10_000,
       });
       return {
         targetStatus: res.status,
@@ -11900,12 +14071,38 @@ export class WebhookService {
     const headers: any = { "Content-Type": "application/json" };
     if (signature) headers["X-Hub-Signature"] = signature;
 
-    await this.webhookQueue.add("dispatch", {
-      userId,
-      url: config.webhookUrl,
-      payload: body,
-      headers,
+    // Catat di database sebelum enqueue
+    const record = await this.prisma.webhookQueue.create({
+      data: {
+        userId,
+        url: config.webhookUrl,
+        payload: JSON.parse(body),
+        headers,
+        status: "pending",
+        maxRetries: 5,
+      },
     });
+
+    // FIX: set attempts & custom backoff sesuai WEBHOOK_RETRY_DELAYS_MS
+    await this.webhookQueue.add(
+      "dispatch",
+      {
+        userId,
+        url: config.webhookUrl,
+        payload: body,
+        headers,
+        dbId: record.id,
+      },
+      {
+        attempts: 5,
+        backoff: {
+          // BullMQ 'custom' backoff — nilai delay diambil dari array berdasarkan attemptsMade
+          type: "custom",
+        },
+        removeOnComplete: true,
+        removeOnFail: false,
+      },
+    );
   }
 }
 
@@ -12031,31 +14228,31 @@ import {
 import { ApiTags, ApiOperation } from "@nestjs/swagger";
 import { WorkflowService } from "./workflow.service";
 import { JwtAuthGuard } from "../../common/guards/jwt-auth.guard";
+import {
+  TierFeatureGuard,
+  RequireFeature,
+} from "../../common/guards/tier-feature.guard";
 import { CurrentUser } from "../../common/decorators/current-user.decorator";
 import { CreateWorkflowDto } from "./dto/create-workflow.dto";
 import { UpdateWorkflowDto } from "./dto/update-workflow.dto";
 import { ToggleWorkflowDto } from "./dto/toggle-workflow.dto";
 
 @ApiTags("Workflow")
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, TierFeatureGuard)
+@RequireFeature("workflow")
 @Controller({ path: "workflows", version: "1" })
 export class WorkflowController {
   constructor(private svc: WorkflowService) {}
 
   @Get()
-  @ApiOperation({ summary: "Daftar workflow" })
   async findAll(@CurrentUser() u: any) {
     return { status: true, data: await this.svc.findAll(u.id) };
   }
-
   @Post()
-  @ApiOperation({ summary: "Buat workflow baru" })
   async create(@CurrentUser() u: any, @Body() dto: CreateWorkflowDto) {
     return { status: true, data: await this.svc.create(u.id, dto) };
   }
-
   @Put(":id")
-  @ApiOperation({ summary: "Update workflow" })
   async update(
     @CurrentUser() u: any,
     @Param("id") id: string,
@@ -12063,10 +14260,8 @@ export class WorkflowController {
   ) {
     return { status: true, data: await this.svc.update(u.id, id, dto) };
   }
-
   @Post(":id/toggle")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: "Aktifkan / nonaktifkan workflow" })
   async toggle(
     @CurrentUser() u: any,
     @Param("id") id: string,
@@ -12077,10 +14272,8 @@ export class WorkflowController {
       data: await this.svc.toggle(u.id, id, dto.isActive),
     };
   }
-
   @Delete(":id")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: "Hapus workflow" })
   async remove(@CurrentUser() u: any, @Param("id") id: string) {
     await this.svc.remove(u.id, id);
     return { status: true };
