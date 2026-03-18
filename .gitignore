@@ -1,0 +1,43 @@
+# Environment
+.env
+.env.local
+.env.production
+.env.staging
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# WhatsApp sessions (auth data, jangan di-commit)
+storage/sessions/
+
+# Uploads & exports (generated files)
+storage/uploads/
+storage/exports/
+storage/broadcasts/
+
+# Coverage
+coverage/
+
+# PM2
+.pm2/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Prisma generated
+node_modules/.prisma/

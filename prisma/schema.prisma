@@ -1,0 +1,704 @@
+// ============================================================
+// WhatsApp Gateway SaaS - Prisma Schema
+// Database: MySQL
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ────────────────────────────────────────────────────────────
+// ENUMS
+// ────────────────────────────────────────────────────────────
+
+enum Role {
+  user
+  admin
+  super_admin
+}
+
+enum SessionStatus {
+  disconnected
+  authenticating
+  connected
+  logged_out
+}
+
+enum MessageStatus {
+  success
+  failed
+  pending
+}
+
+enum ReadStatus {
+  sent
+  delivered
+  read
+}
+
+enum CampaignStatus {
+  pending
+  processing
+  completed
+  cancelled
+}
+
+enum MatchType {
+  exact
+  contains
+  regex
+  ai_smart
+}
+
+enum WorkflowNodeType {
+  send_message
+  delay
+  add_tag
+}
+
+enum DripSubscriptionStatus {
+  active
+  completed
+  paused
+  cancelled
+}
+
+enum ScheduledMessageStatus {
+  pending
+  sent
+  failed
+  cancelled
+}
+
+enum RecurrenceType {
+  none
+  daily
+  weekly
+  monthly
+}
+
+enum WebhookQueueStatus {
+  pending
+  processing
+  completed
+  failed
+}
+
+enum MessageType {
+  text
+  image
+  video
+  audio
+  document
+  sticker
+  location
+  vcard
+  poll
+}
+
+enum AuditAction {
+  LOGIN
+  LOGOUT
+  CREATE_SESSION
+  DELETE_SESSION
+  RECONNECT_SESSION
+  CREATE_API_KEY
+  DELETE_API_KEY
+  START_BROADCAST
+  CANCEL_BROADCAST
+  UPDATE_SETTINGS
+  ENABLE_2FA
+  DISABLE_2FA
+  CREATE_USER
+  UPDATE_USER
+  DELETE_USER
+  ASSIGN_TIER
+  CREATE_WORKSPACE
+  INVITE_MEMBER
+  REMOVE_MEMBER
+}
+
+enum TierFeature {
+  broadcast
+  auto_reply
+  workflow
+  drip_campaign
+  ai_smart_reply
+  channels
+  labels
+  customer_note
+  scheduler
+  webhook
+  api_access
+}
+
+enum WorkspaceMemberRole {
+  owner
+  admin
+  member
+}
+
+// ────────────────────────────────────────────────────────────
+// USER
+// ────────────────────────────────────────────────────────────
+
+model User {
+  id              String    @id @default(uuid())
+  email           String    @unique
+  name            String
+  picture         String?   @db.Text
+  role            Role      @default(user)
+  isActive        Boolean   @default(true)
+  twoFaSecret     String?
+  twoFaEnabled    Boolean   @default(false)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // Relations
+  quota                 UserQuota?
+  tier                  UserTier?
+  sessions              WhatsappSession[]
+  campaigns             Campaign[]
+  messageLogs           MessageLog[]
+  inbox                 Inbox[]
+  contacts              Contact[]
+  autoReplies           AutoReply[]
+  workflows             Workflow[]
+  workflowLogs          WorkflowLog[]
+  dripCampaigns         DripCampaign[]
+  scheduledMessages     ScheduledMessage[]
+  apiKeys               ApiKey[]
+  templates             Template[]
+  auditLogs             AuditLog[]
+  webhookConfigs        WebhookConfig?
+  webhookQueues         WebhookQueue[]
+  settings              UserSetting?
+  callLogs              CallLog[]
+  workspaceMembers      WorkspaceMember[]
+  ownedWorkspaces       Workspace[]       @relation("WorkspaceOwner")
+
+  @@map("users")
+}
+
+// ────────────────────────────────────────────────────────────
+// TIER
+// ────────────────────────────────────────────────────────────
+
+model Tier {
+  id                        String        @id @default(uuid())
+  name                      String        @unique
+  description               String?       @db.Text
+  maxSessions               Int           @default(1)
+  maxApiKeys                Int           @default(1)
+  maxDailyMessages          Int           @default(100)
+  maxMonthlyBroadcasts      Int           @default(5)
+  maxBroadcastRecipients    Int           @default(1000)
+  maxWorkflows              Int           @default(3)
+  maxDripCampaigns          Int           @default(3)
+  maxTemplates              Int           @default(10)
+  maxContacts               Int           @default(500)
+  rateLimitPerMinute        Int           @default(30)
+  features                  Json          // TierFeature[]
+  price                     Decimal?      @db.Decimal(10, 2)
+  isActive                  Boolean       @default(true)
+  createdAt                 DateTime      @default(now())
+  updatedAt                 DateTime      @updatedAt
+
+  // Relations
+  userTiers   UserTier[]
+
+  @@map("tiers")
+}
+
+model UserTier {
+  id          String    @id @default(uuid())
+  userId      String    @unique
+  tierId      String
+  startedAt   DateTime  @default(now())
+  expiresAt   DateTime?
+  isGrace     Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tier        Tier      @relation(fields: [tierId], references: [id])
+
+  @@map("user_tiers")
+}
+
+model UserQuota {
+  userId                    String    @id
+  messagesSentToday         Int       @default(0)
+  broadcastsThisMonth       Int       @default(0)
+  lastDailyResetAt          DateTime?
+  lastMonthlyResetAt        DateTime?
+  createdAt                 DateTime  @default(now())
+  updatedAt                 DateTime  @updatedAt
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_quotas")
+}
+
+// ────────────────────────────────────────────────────────────
+// WHATSAPP SESSION
+// ────────────────────────────────────────────────────────────
+
+model WhatsappSession {
+  id            String          @id @default(uuid())
+  userId        String
+  sessionName   String
+  phoneNumber   String?
+  status        SessionStatus   @default(disconnected)
+  authFolder    String
+  isDefault     Boolean         @default(false)
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  // Relations
+  user                  User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messageLogs           MessageLog[]
+  inbox                 Inbox[]
+  campaigns             Campaign[]
+  scheduledMessages     ScheduledMessage[]
+  dripCampaigns         DripCampaign[]
+  callLogs              CallLog[]
+
+  @@unique([userId, sessionName])
+  @@index([userId])
+  @@index([status])
+  @@map("whatsapp_sessions")
+}
+
+// ────────────────────────────────────────────────────────────
+// API KEY
+// ────────────────────────────────────────────────────────────
+
+model ApiKey {
+  id            String    @id @default(uuid())
+  userId        String
+  name          String
+  keyHash       String    @unique
+  keyPreview    String    @db.VarChar(8)
+  ipWhitelist   String?   @db.Text
+  lastUsedAt    DateTime?
+  createdAt     DateTime  @default(now())
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("api_keys")
+}
+
+// ────────────────────────────────────────────────────────────
+// MESSAGE LOG
+// ────────────────────────────────────────────────────────────
+
+model MessageLog {
+  id            Int           @id @default(autoincrement())
+  userId        String
+  sessionId     String?
+  campaignId    String?
+  target        String
+  message       String        @db.Text
+  messageType   MessageType   @default(text)
+  status        MessageStatus
+  readStatus    ReadStatus    @default(sent)
+  errorMessage  String?       @db.Text
+  timestamp     DateTime      @default(now())
+
+  user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  session   WhatsappSession?  @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  campaign  Campaign?         @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([timestamp])
+  @@index([campaignId])
+  @@index([status])
+  @@map("message_logs")
+}
+
+// ────────────────────────────────────────────────────────────
+// INBOX
+// ────────────────────────────────────────────────────────────
+
+model Inbox {
+  id              String      @id
+  userId          String
+  sessionId       String?
+  remoteJid       String
+  pushName        String?
+  messageContent  String?     @db.Text
+  messageType     MessageType @default(text)
+  mediaUrl        String?     @db.Text
+  isRead          Boolean     @default(false)
+  timestamp       DateTime    @default(now())
+
+  user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  session   WhatsappSession?  @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([userId, remoteJid])
+  @@index([isRead])
+  @@map("inbox")
+}
+
+// ────────────────────────────────────────────────────────────
+// CAMPAIGN (BROADCAST)
+// ────────────────────────────────────────────────────────────
+
+model Campaign {
+  id                String          @id @default(uuid())
+  userId            String
+  sessionId         String?
+  name              String
+  message           String          @db.Text
+  mediaPath         String?
+  totalRecipients   Int             @default(0)
+  processedCount    Int             @default(0)
+  successCount      Int             @default(0)
+  failedCount       Int             @default(0)
+  status            CampaignStatus  @default(pending)
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  user        User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  session     WhatsappSession?  @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  messageLogs MessageLog[]
+
+  @@index([userId])
+  @@index([status])
+  @@map("campaigns")
+}
+
+// ────────────────────────────────────────────────────────────
+// CONTACT
+// ────────────────────────────────────────────────────────────
+
+model Contact {
+  id        String    @id @default(uuid())
+  userId    String
+  name      String
+  number    String
+  tag       String?
+  notes     String?   @db.Text
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  user                User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  dripSubscriptions   DripSubscription[]
+
+  @@unique([userId, number])
+  @@index([userId])
+  @@index([userId, tag])
+  @@map("contacts")
+}
+
+// ────────────────────────────────────────────────────────────
+// AUTO REPLY
+// ────────────────────────────────────────────────────────────
+
+model AutoReply {
+  id          String      @id @default(uuid())
+  userId      String
+  keyword     String
+  response    String      @db.Text
+  matchType   MatchType
+  isActive    Boolean     @default(true)
+  priority    Int         @default(0)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([userId, isActive, priority])
+  @@map("auto_replies")
+}
+
+// ────────────────────────────────────────────────────────────
+// WORKFLOW
+// ────────────────────────────────────────────────────────────
+
+model Workflow {
+  id                  String    @id @default(uuid())
+  userId              String
+  name                String
+  triggerType         String    @default("message_received")
+  triggerCondition    Json
+  nodes               Json
+  isActive            Boolean   @default(true)
+  executionCount      Int       @default(0)
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  user  User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  logs  WorkflowLog[]
+
+  @@index([userId])
+  @@index([userId, isActive])
+  @@map("workflows")
+}
+
+model WorkflowLog {
+  id              Int       @id @default(autoincrement())
+  workflowId      String
+  userId          String
+  contactNumber   String
+  status          String
+  logs            Json
+  errorMessage    String?   @db.Text
+  timestamp       DateTime  @default(now())
+
+  workflow  Workflow  @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([workflowId])
+  @@index([timestamp])
+  @@map("workflow_logs")
+}
+
+// ────────────────────────────────────────────────────────────
+// DRIP CAMPAIGN
+// ────────────────────────────────────────────────────────────
+
+model DripCampaign {
+  id            String    @id @default(uuid())
+  userId        String
+  sessionId     String?
+  name          String
+  triggerTag    String
+  isActive      Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  user              User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  session           WhatsappSession?    @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  steps             DripStep[]
+  subscriptions     DripSubscription[]
+
+  @@index([userId])
+  @@map("drip_campaigns")
+}
+
+model DripStep {
+  id          String    @id @default(uuid())
+  dripId      String
+  dayOffset   Int
+  timeAt      String    @db.VarChar(5)
+  message     String    @db.Text
+  mediaPath   String?
+
+  drip  DripCampaign  @relation(fields: [dripId], references: [id], onDelete: Cascade)
+
+  @@unique([dripId, dayOffset])
+  @@map("drip_steps")
+}
+
+model DripSubscription {
+  id            String                  @id @default(uuid())
+  dripId        String
+  contactId     String
+  startDate     DateTime
+  status        DripSubscriptionStatus  @default(active)
+  lastStepDay   Int                     @default(0)
+  createdAt     DateTime                @default(now())
+  updatedAt     DateTime                @updatedAt
+
+  drip      DripCampaign  @relation(fields: [dripId], references: [id], onDelete: Cascade)
+  contact   Contact       @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@unique([dripId, contactId])
+  @@index([status])
+  @@map("drip_subscriptions")
+}
+
+// ────────────────────────────────────────────────────────────
+// SCHEDULED MESSAGE
+// ────────────────────────────────────────────────────────────
+
+model ScheduledMessage {
+  id              String                  @id @default(uuid())
+  userId          String
+  sessionId       String
+  target          String
+  message         String                  @db.Text
+  messageType     MessageType             @default(text)
+  mediaPath       String?
+  scheduledTime   DateTime
+  status          ScheduledMessageStatus  @default(pending)
+  recurrenceType  RecurrenceType          @default(none)
+  createdAt       DateTime                @default(now())
+  updatedAt       DateTime                @updatedAt
+
+  user    User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  session WhatsappSession   @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([status, scheduledTime])
+  @@index([userId])
+  @@map("scheduled_messages")
+}
+
+// ────────────────────────────────────────────────────────────
+// TEMPLATE
+// ────────────────────────────────────────────────────────────
+
+model Template {
+  id          String    @id @default(uuid())
+  userId      String
+  name        String
+  content     String    @db.Text
+  category    String    @default("General")
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, name])
+  @@index([userId])
+  @@map("templates")
+}
+
+// ────────────────────────────────────────────────────────────
+// WEBHOOK
+// ────────────────────────────────────────────────────────────
+
+model WebhookConfig {
+  userId        String    @id
+  webhookUrl    String?   @db.Text
+  webhookSecret String?
+  isActive      Boolean   @default(true)
+  updatedAt     DateTime  @updatedAt
+
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("webhook_configs")
+}
+
+model WebhookQueue {
+  id            Int                 @id @default(autoincrement())
+  userId        String
+  url           String              @db.Text
+  payload       Json
+  headers       Json
+  retries       Int                 @default(0)
+  maxRetries    Int                 @default(5)
+  status        WebhookQueueStatus  @default(pending)
+  lastError     String?             @db.Text
+  nextRetryAt   DateTime            @default(now())
+  createdAt     DateTime            @default(now())
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+  @@index([status, nextRetryAt])
+  @@map("webhook_queues")
+}
+
+// ────────────────────────────────────────────────────────────
+// SETTINGS
+// ────────────────────────────────────────────────────────────
+
+model GlobalSetting {
+  key         String    @id
+  value       String    @db.Text
+  updatedAt   DateTime  @updatedAt
+
+  @@map("global_settings")
+}
+
+model UserSetting {
+  userId                    String    @id
+  geminiApiKey              String?
+  geminiConfidenceThreshold Float     @default(0.6)
+  autoDownloadPhotos        Boolean   @default(false)
+  autoDownloadVideos        Boolean   @default(false)
+  autoDownloadAudio         Boolean   @default(false)
+  autoDownloadDocuments     Boolean   @default(false)
+  backgroundSync            Boolean   @default(false)
+  updatedAt                 DateTime  @updatedAt
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_settings")
+}
+
+// ────────────────────────────────────────────────────────────
+// AUDIT LOG
+// ────────────────────────────────────────────────────────────
+
+model AuditLog {
+  id          String        @id @default(uuid())
+  userId      String?
+  userEmail   String
+  action      AuditAction
+  details     Json?
+  ipAddress   String
+  userAgent   String?       @db.Text
+  timestamp   DateTime      @default(now())
+
+  user  User?  @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([timestamp])
+  @@index([action])
+  @@map("audit_logs")
+}
+
+// ────────────────────────────────────────────────────────────
+// CALL LOG
+// ────────────────────────────────────────────────────────────
+
+model CallLog {
+  id          String    @id @default(uuid())
+  userId      String
+  sessionId   String?
+  fromNumber  String
+  callType    String    @default("voice")
+  status      String    @default("missed")
+  timestamp   DateTime  @default(now())
+
+  user    User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  session WhatsappSession?  @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([timestamp])
+  @@map("call_logs")
+}
+
+// ────────────────────────────────────────────────────────────
+// WORKSPACE
+// ────────────────────────────────────────────────────────────
+
+model Workspace {
+  id          String    @id @default(uuid())
+  name        String
+  ownerId     String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  owner    User              @relation("WorkspaceOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  members  WorkspaceMember[]
+
+  @@map("workspaces")
+}
+
+model WorkspaceMember {
+  id            String                @id @default(uuid())
+  workspaceId   String
+  userId        String
+  role          WorkspaceMemberRole   @default(member)
+  permissions   Json?
+  joinedAt      DateTime              @default(now())
+
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+  @@map("workspace_members")
+}
