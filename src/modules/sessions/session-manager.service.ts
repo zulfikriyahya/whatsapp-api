@@ -1,26 +1,27 @@
 import {
+  BadRequestException,
+  Inject,
   Injectable,
   Logger,
-  OnModuleInit,
   OnModuleDestroy,
-  Inject,
+  OnModuleInit,
   forwardRef,
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { PrismaService } from "../../prisma/prisma.service";
-import { RedisService } from "../../redis/redis.service";
-import { GatewayService } from "../../gateway/gateway.service";
-import { NotificationsService } from "../notifications/notifications.service";
-import { InboxService } from "../inbox/inbox.service";
-import { AutoReplyEngine } from "../auto-reply/auto-reply.engine";
-import { WorkflowEngine } from "../workflow/workflow.engine";
-import { WebhookService } from "../webhook/webhook.service";
+import { SessionStatus } from "@prisma/client";
+import { Client, LocalAuth, Message, MessageMedia } from "whatsapp-web.js";
 import { CacheKeys } from "../../common/constants/cache-keys.constant";
 import { ErrorCodes } from "../../common/constants/error-codes.constant";
-import { SessionStatus } from "@prisma/client";
-import { NotFoundException, BadRequestException } from "@nestjs/common";
-import { Client, LocalAuth, Message, MessageMedia } from "whatsapp-web.js";
-import * as path from "path";
+import { AlertType } from "../../common/enums/status.enum";
+import { GatewayService } from "../../gateway/gateway.service";
+import { PrismaService } from "../../prisma/prisma.service";
+import { RedisService } from "../../redis/redis.service";
+import { AutoReplyEngine } from "../auto-reply/auto-reply.engine";
+import { InboxService } from "../inbox/inbox.service";
+import { NotificationsService } from "../notifications/notifications.service";
+import { WebhookService } from "../webhook/webhook.service";
+import { WorkflowEngine } from "../workflow/workflow.engine";
+
 @Injectable()
 export class SessionManagerService implements OnModuleInit, OnModuleDestroy {
   private logger = new Logger("SessionManagerService");
@@ -53,7 +54,7 @@ export class SessionManagerService implements OnModuleInit, OnModuleDestroy {
   }
 
   async onModuleDestroy() {
-    for (const [id, client] of this.clients) {
+    for (const [, client] of this.clients) {
       await client.destroy().catch(() => {});
     }
   }
@@ -88,7 +89,6 @@ export class SessionManagerService implements OnModuleInit, OnModuleDestroy {
 
     this.clients.set(sessionId, client);
     this.setupClientEvents(client, sessionId, userId);
-
     await client.initialize();
 
     if (usePairingCode && phoneNumber) {
@@ -140,12 +140,17 @@ export class SessionManagerService implements OnModuleInit, OnModuleDestroy {
         where: { id: sessionId },
         include: { user: true },
       });
-      if (session)
+
+      if (session) {
         this.notifications.notifySessionDisconnected(
           userId,
           session.user.email,
           session.sessionName,
         );
+
+        // FIX: Cek apakah semua sesi user sekarang terputus → kirim alert khusus
+        await this.checkAllSessionsDown(userId);
+      }
 
       if (reason === "LOGOUT") {
         await this.updateStatus(sessionId, SessionStatus.logged_out);
@@ -181,9 +186,45 @@ export class SessionManagerService implements OnModuleInit, OnModuleDestroy {
     client.on("group_leave", (n) =>
       this.gateway.emit(userId, "group_leave", { sessionId, notification: n }),
     );
-    client.on("call", (call) =>
-      this.gateway.emit(userId, "incoming_call", { sessionId, call }),
-    );
+
+    client.on("call", async (call) => {
+      // Emit ke socket
+      this.gateway.emit(userId, "incoming_call", { sessionId, call });
+
+      // FIX: Simpan ke database callLog
+      try {
+        await this.prisma.callLog.create({
+          data: {
+            userId,
+            sessionId,
+            fromNumber: call.from?.split("@")[0] ?? "unknown",
+            callType: call.isVideo ? "video" : "voice",
+            status: "missed", // default missed; bisa diupdate jika ada event answer
+            timestamp: new Date(call.timestamp * 1000),
+          },
+        });
+      } catch (e) {
+        this.logger.error(`Failed to log call: ${e.message}`);
+      }
+    });
+  }
+
+  /**
+   * FIX: Cek apakah semua sesi user terputus, kirim alert all_sessions_down
+   * sesuai doc 1: "Notifikasi jika semua sesi user terputus sekaligus"
+   */
+  private async checkAllSessionsDown(userId: string) {
+    const connectedCount = await this.prisma.whatsappSession.count({
+      where: { userId, status: SessionStatus.connected },
+    });
+    if (connectedCount === 0) {
+      this.gateway.emitSystemAlert(
+        userId,
+        AlertType.ALL_SESSIONS_DOWN,
+        "Semua sesi WhatsApp Anda saat ini terputus.",
+      );
+      this.logger.warn(`All sessions down for user ${userId}`);
+    }
   }
 
   private async handleIncomingMessage(
@@ -308,7 +349,7 @@ export class SessionManagerService implements OnModuleInit, OnModuleDestroy {
     if (!sessions.length) return null;
 
     const rrKey = CacheKeys.roundRobin(userId);
-    let idx = (await this.redis.get<number>(rrKey)) ?? 0;
+    const idx = (await this.redis.get<number>(rrKey)) ?? 0;
     const session = sessions[idx % sessions.length];
     await this.redis.set(rrKey, (idx + 1) % sessions.length, 86400);
     return session.id;

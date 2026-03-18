@@ -9,6 +9,7 @@ import { BroadcastProcessor } from "./processors/broadcast.processor";
 import { QueueNames } from "../../common/constants/queue-names.constant";
 import { SessionsModule } from "../sessions/sessions.module";
 import { GatewayModule } from "../../gateway/gateway.module";
+import { NotificationsModule } from "../notifications/notifications.module";
 import * as path from "path";
 
 @Module({
@@ -16,6 +17,7 @@ import * as path from "path";
     BullModule.registerQueue({ name: QueueNames.BROADCAST }),
     SessionsModule,
     GatewayModule,
+    NotificationsModule, // FIX: diperlukan oleh QuotaGuard
     MulterModule.registerAsync({
       inject: [ConfigService],
       useFactory: (cfg: ConfigService) => ({

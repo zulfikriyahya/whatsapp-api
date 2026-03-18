@@ -1,4 +1,4 @@
-import { NestFactory } from "@nestjs/core";
+import { NestFactory, Reflector } from "@nestjs/core";
 import { ValidationPipe, VersioningType } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { SwaggerModule, DocumentBuilder } from "@nestjs/swagger";
@@ -10,11 +10,13 @@ import { PrismaExceptionFilter } from "./common/filters/prisma-exception.filter"
 import { ResponseInterceptor } from "./common/interceptors/response.interceptor";
 import { LoggingInterceptor } from "./common/interceptors/logging.interceptor";
 import { TimeoutInterceptor } from "./common/interceptors/timeout.interceptor";
+import { SandboxInterceptor } from "./common/interceptors/sandbox.interceptor";
 import * as cookieParser from "cookie-parser";
+import * as mime from "mime-types"; // pastikan mime-types ter-install
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
-    logger: ["error", "warn", "log", "debug"],
+    logger: ["error", "warn", "log"],
   });
 
   const config = app.get(ConfigService);
@@ -23,11 +25,11 @@ async function bootstrap() {
   const cookieSecret = config.get<string>("app.cookieSecret");
   const nodeEnv = config.get<string>("app.nodeEnv");
 
-  // ── Security ──────────────────────────────────────────────
+  // ── Security ─────────────────────────────────────────────
   app.use(helmet());
   app.use(cookieParser(cookieSecret));
 
-  // ── CORS ──────────────────────────────────────────────────
+  // ── CORS ─────────────────────────────────────────────────
   app.enableCors({
     origin: clientUrl,
     credentials: true,
@@ -38,7 +40,7 @@ async function bootstrap() {
   app.setGlobalPrefix("api");
   app.enableVersioning({ type: VersioningType.URI, defaultVersion: "1" });
 
-  // ── Global Pipes ──────────────────────────────────────────
+  // ── Global Pipes ─────────────────────────────────────────
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
@@ -58,13 +60,14 @@ async function bootstrap() {
   app.useGlobalInterceptors(
     new LoggingInterceptor(),
     new TimeoutInterceptor(),
+    new SandboxInterceptor(), // sandbox mode untuk API Key
     new ResponseInterceptor(),
   );
 
   // ── Socket.IO ─────────────────────────────────────────────
   app.useWebSocketAdapter(new IoAdapter(app));
 
-  // ── Swagger ───────────────────────────────────────────────
+  // ── Swagger (dev only) ───────────────────────────────────
   if (nodeEnv !== "production") {
     const swaggerConfig = new DocumentBuilder()
       .setTitle("WhatsApp Gateway SaaS API")

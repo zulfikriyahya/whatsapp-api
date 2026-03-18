@@ -16,7 +16,7 @@ import { WebhookModule } from "../webhook/webhook.module";
     AuditModule,
     GatewayModule,
     NotificationsModule,
-    InboxModule,
+    forwardRef(() => InboxModule), // FIX: forwardRef karena InboxModule inject SessionManagerService
     forwardRef(() => AutoReplyModule),
     forwardRef(() => WorkflowModule),
     WebhookModule,

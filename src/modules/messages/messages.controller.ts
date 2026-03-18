@@ -13,40 +13,50 @@ import {
   HttpCode,
   HttpStatus,
   Res,
-} from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
-import { ApiTags, ApiOperation } from '@nestjs/swagger';
-import { Response } from 'express';
-import { ConfigService } from '@nestjs/config';
-import { MessagesService } from './messages.service';
-import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { SendMessageDto } from './dto/send-message.dto';
-import { SendMediaDto } from './dto/send-media.dto';
-import { SendLocationDto } from './dto/send-location.dto';
-import { SendPollDto } from './dto/send-poll.dto';
-import { SendContactDto } from './dto/send-contact.dto';
-import { ReactMessageDto } from './dto/react-message.dto';
-import { QueryMessagesDto } from './dto/query-messages.dto';
+} from "@nestjs/common";
+import { FileInterceptor } from "@nestjs/platform-express";
+import { ApiTags, ApiOperation } from "@nestjs/swagger";
+import { Response } from "express";
+import { ConfigService } from "@nestjs/config";
+import { MessagesService } from "./messages.service";
+import { JwtAuthGuard } from "../../common/guards/jwt-auth.guard";
+import { QuotaGuard } from "../../common/guards/quota.guard";
+import { SandboxInterceptor } from "../../common/interceptors/sandbox.interceptor";
+import { AllowApiKey } from "../../common/guards/api-key-restriction.guard";
+import { CurrentUser } from "../../common/decorators/current-user.decorator";
+import { SendMessageDto } from "./dto/send-message.dto";
+import { SendMediaDto } from "./dto/send-media.dto";
+import { SendLocationDto } from "./dto/send-location.dto";
+import { SendLiveLocationDto } from "./dto/send-live-location.dto";
+import { SendPollDto } from "./dto/send-poll.dto";
+import { SendContactDto } from "./dto/send-contact.dto";
+import { SendVoiceNoteDto } from "./dto/send-voice-note.dto";
+import { ReactMessageDto } from "./dto/react-message.dto";
+import { QueryMessagesDto } from "./dto/query-messages.dto";
 
-@ApiTags('Messages')
+@ApiTags("Messages")
 @UseGuards(JwtAuthGuard)
-@Controller({ path: 'messages', version: '1' })
+@UseInterceptors(SandboxInterceptor)
+@Controller({ path: "messages", version: "1" })
 export class MessagesController {
   constructor(
     private svc: MessagesService,
     private cfg: ConfigService,
   ) {}
 
-  @Post('send')
-  @ApiOperation({ summary: 'Kirim pesan teks' })
+  @Post("send")
+  @AllowApiKey() // ✅ API Key boleh akses
+  @UseGuards(QuotaGuard)
+  @ApiOperation({ summary: "Kirim pesan teks" })
   async send(@CurrentUser() u: any, @Body() dto: SendMessageDto) {
     return { status: true, data: await this.svc.send(u.id, dto) };
   }
 
-  @Post('send-media')
-  @UseInterceptors(FileInterceptor('file'))
-  @ApiOperation({ summary: 'Kirim pesan media' })
+  @Post("send-media")
+  @AllowApiKey()
+  @UseGuards(QuotaGuard)
+  @UseInterceptors(FileInterceptor("file"))
+  @ApiOperation({ summary: "Kirim pesan media" })
   async sendMedia(
     @CurrentUser() u: any,
     @Body() dto: SendMediaDto,
@@ -55,30 +65,65 @@ export class MessagesController {
     return { status: true, data: await this.svc.sendMedia(u.id, dto, file) };
   }
 
-  @Post('send-location')
-  @ApiOperation({ summary: 'Kirim lokasi' })
+  @Post("send-location")
+  @AllowApiKey()
+  @UseGuards(QuotaGuard)
+  @ApiOperation({ summary: "Kirim lokasi" })
   async sendLocation(@CurrentUser() u: any, @Body() dto: SendLocationDto) {
     return { status: true, data: await this.svc.sendLocation(u.id, dto) };
   }
 
-  @Post('send-poll')
-  @ApiOperation({ summary: 'Kirim poll' })
+  @Post("send-live-location")
+  @AllowApiKey()
+  @UseGuards(QuotaGuard)
+  @ApiOperation({ summary: "Kirim live location" })
+  async sendLiveLocation(
+    @CurrentUser() u: any,
+    @Body() dto: SendLiveLocationDto,
+  ) {
+    return { status: true, data: await this.svc.sendLiveLocation(u.id, dto) };
+  }
+
+  @Post("send-poll")
+  @AllowApiKey()
+  @UseGuards(QuotaGuard)
+  @ApiOperation({ summary: "Kirim poll" })
   async sendPoll(@CurrentUser() u: any, @Body() dto: SendPollDto) {
     return { status: true, data: await this.svc.sendPoll(u.id, dto) };
   }
 
-  @Post('send-contact')
-  @ApiOperation({ summary: 'Kirim kontak sebagai vCard' })
+  @Post("send-contact")
+  @AllowApiKey()
+  @UseGuards(QuotaGuard)
+  @ApiOperation({ summary: "Kirim kontak sebagai vCard" })
   async sendContact(@CurrentUser() u: any, @Body() dto: SendContactDto) {
     return { status: true, data: await this.svc.sendContact(u.id, dto) };
   }
 
-  @Patch(':sessionId/messages/:messageId/edit')
-  @ApiOperation({ summary: 'Edit pesan yang sudah dikirim' })
+  @Post("send-voice-note")
+  @AllowApiKey()
+  @UseGuards(QuotaGuard)
+  @UseInterceptors(FileInterceptor("file"))
+  @ApiOperation({ summary: "Kirim voice note" })
+  async sendVoiceNote(
+    @CurrentUser() u: any,
+    @Body() dto: SendVoiceNoteDto,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    return {
+      status: true,
+      data: await this.svc.sendVoiceNote(u.id, dto, file),
+    };
+  }
+
+  // ── Endpoint di bawah: TIDAK boleh diakses via API Key ──
+
+  @Patch(":sessionId/messages/:messageId/edit")
+  @ApiOperation({ summary: "Edit pesan" })
   async editMessage(
     @CurrentUser() u: any,
-    @Param('sessionId') sid: string,
-    @Param('messageId') mid: string,
+    @Param("sessionId") sid: string,
+    @Param("messageId") mid: string,
     @Body() body: { text: string },
   ) {
     return {
@@ -87,13 +132,12 @@ export class MessagesController {
     };
   }
 
-  @Post(':sessionId/messages/:messageId/forward')
+  @Post(":sessionId/messages/:messageId/forward")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Forward pesan ke nomor lain' })
   async forwardMessage(
     @CurrentUser() u: any,
-    @Param('sessionId') sid: string,
-    @Param('messageId') mid: string,
+    @Param("sessionId") sid: string,
+    @Param("messageId") mid: string,
     @Body() body: { to: string },
   ) {
     return {
@@ -102,13 +146,12 @@ export class MessagesController {
     };
   }
 
-  @Post(':sessionId/messages/:messageId/pin')
+  @Post(":sessionId/messages/:messageId/pin")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Pin pesan di chat' })
   async pinMessage(
     @CurrentUser() u: any,
-    @Param('sessionId') sid: string,
-    @Param('messageId') mid: string,
+    @Param("sessionId") sid: string,
+    @Param("messageId") mid: string,
     @Body() body: { duration?: number },
   ) {
     return {
@@ -117,39 +160,36 @@ export class MessagesController {
     };
   }
 
-  @Post(':sessionId/messages/:messageId/unpin')
+  @Post(":sessionId/messages/:messageId/unpin")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Unpin pesan' })
   async unpinMessage(
     @CurrentUser() u: any,
-    @Param('sessionId') sid: string,
-    @Param('messageId') mid: string,
+    @Param("sessionId") sid: string,
+    @Param("messageId") mid: string,
   ) {
     return { status: true, data: await this.svc.unpinMessage(u.id, sid, mid) };
   }
 
-  @Post(':sessionId/messages/:messageId/download')
+  @Post(":sessionId/messages/:messageId/download")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Download media dari pesan masuk' })
   async downloadMedia(
     @CurrentUser() u: any,
-    @Param('sessionId') sid: string,
-    @Param('messageId') mid: string,
+    @Param("sessionId") sid: string,
+    @Param("messageId") mid: string,
   ) {
-    const storagePath = this.cfg.get<string>('app.storagePath');
+    const storagePath = this.cfg.get<string>("app.storagePath");
     return {
       status: true,
       data: await this.svc.downloadMedia(u.id, sid, mid, storagePath),
     };
   }
 
-  @Post(':sessionId/messages/:messageId/react')
+  @Post(":sessionId/messages/:messageId/react")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'React pesan dengan emoji' })
   async react(
     @CurrentUser() u: any,
-    @Param('sessionId') sid: string,
-    @Param('messageId') mid: string,
+    @Param("sessionId") sid: string,
+    @Param("messageId") mid: string,
     @Body() dto: ReactMessageDto,
   ) {
     return {
@@ -158,14 +198,13 @@ export class MessagesController {
     };
   }
 
-  @Delete(':sessionId/messages/:messageId')
+  @Delete(":sessionId/messages/:messageId")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Hapus pesan' })
   async delete(
     @CurrentUser() u: any,
-    @Param('sessionId') sid: string,
-    @Param('messageId') mid: string,
-    @Query('forEveryone') forEveryone?: string,
+    @Param("sessionId") sid: string,
+    @Param("messageId") mid: string,
+    @Query("forEveryone") forEveryone?: string,
   ) {
     return {
       status: true,
@@ -173,17 +212,17 @@ export class MessagesController {
         u.id,
         sid,
         mid,
-        forEveryone !== 'false',
+        forEveryone !== "false",
       ),
     };
   }
 
-  @Get('check/:sessionId/:phone')
-  @ApiOperation({ summary: 'Cek nomor terdaftar di WA' })
+  @Get("check/:sessionId/:phone")
+  @AllowApiKey()
   async checkRegistered(
     @CurrentUser() u: any,
-    @Param('sessionId') sid: string,
-    @Param('phone') phone: string,
+    @Param("sessionId") sid: string,
+    @Param("phone") phone: string,
   ) {
     return {
       status: true,
@@ -191,8 +230,8 @@ export class MessagesController {
     };
   }
 
-  @Get('logs')
-  @ApiOperation({ summary: 'Riwayat pesan' })
+  @Get("logs")
+  @ApiOperation({ summary: "Riwayat pesan" })
   async logs(@CurrentUser() u: any, @Query() dto: QueryMessagesDto) {
     const r = await this.svc.getLogs(u.id, dto);
     return {
@@ -207,18 +246,17 @@ export class MessagesController {
     };
   }
 
-  @Get('logs/export-pdf')
-  @ApiOperation({ summary: 'Export riwayat pesan sebagai PDF' })
+  @Get("logs/export-pdf")
   async exportLogsPdf(
     @CurrentUser() u: any,
     @Query() dto: QueryMessagesDto,
     @Res() res: Response,
   ) {
     const buffer = await this.svc.exportLogsPdf(u.id, dto);
-    const date = new Date().toISOString().split('T')[0].replace(/-/g, '');
-    res.setHeader('Content-Type', 'application/pdf');
+    const date = new Date().toISOString().split("T")[0].replace(/-/g, "");
+    res.setHeader("Content-Type", "application/pdf");
     res.setHeader(
-      'Content-Disposition',
+      "Content-Disposition",
       `attachment; filename="messages_${date}.pdf"`,
     );
     res.send(buffer);

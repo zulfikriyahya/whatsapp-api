@@ -23,6 +23,8 @@ export class ApiKeysService {
         name: true,
         keyPreview: true,
         ipWhitelist: true,
+        isSandbox: true,
+        expiresAt: true,
         lastUsedAt: true,
         createdAt: true,
       },
@@ -38,6 +40,7 @@ export class ApiKeysService {
     ua: string,
   ) {
     if (dto.ipWhitelist) validateIpWhitelist(dto.ipWhitelist);
+
     const plaintext = generateApiToken();
     const keyHash = sha256(plaintext);
     const keyPreview = plaintext.slice(0, 8);
@@ -49,17 +52,28 @@ export class ApiKeysService {
         keyHash,
         keyPreview,
         ipWhitelist: dto.ipWhitelist ?? "",
+        isSandbox: dto.isSandbox ?? false,
+        expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : null,
       },
     });
+
     await this.audit.log({
       userId,
       userEmail: email,
       action: AuditAction.CREATE_API_KEY,
-      details: { keyId: apiKey.id },
+      details: { keyId: apiKey.id, isSandbox: apiKey.isSandbox },
       ip,
       userAgent: ua,
     });
-    return { id: apiKey.id, key: plaintext, name: apiKey.name, keyPreview };
+
+    return {
+      id: apiKey.id,
+      key: plaintext,
+      name: apiKey.name,
+      keyPreview,
+      isSandbox: apiKey.isSandbox,
+      expiresAt: apiKey.expiresAt,
+    };
   }
 
   async remove(

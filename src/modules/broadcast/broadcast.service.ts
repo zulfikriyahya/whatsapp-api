@@ -2,19 +2,20 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
-} from '@nestjs/common';
-import { InjectQueue } from '@nestjs/bullmq';
-import { Queue } from 'bullmq';
-import { PrismaService } from '../../prisma/prisma.service';
-import { QueueNames } from '../../common/constants/queue-names.constant';
-import { ErrorCodes } from '../../common/constants/error-codes.constant';
-import { SessionStatus } from '@prisma/client';
-import { normalizePhone } from '../../common/utils/phone-normalizer.util';
-import { parseCsvContacts } from '../../common/utils/csv-parser.util';
-import { CreateBroadcastDto } from './dto/create-broadcast.dto';
-import { QueryCampaignsDto } from './dto/query-campaigns.dto';
+} from "@nestjs/common";
+import { InjectQueue } from "@nestjs/bullmq";
+import { Queue } from "bullmq";
+import { PrismaService } from "../../prisma/prisma.service";
+import { QueueNames } from "../../common/constants/queue-names.constant";
+import { ErrorCodes } from "../../common/constants/error-codes.constant";
+import { SessionStatus } from "@prisma/client";
+import { normalizePhone } from "../../common/utils/phone-normalizer.util";
+import { parseCsvContacts } from "../../common/utils/csv-parser.util";
+import { generatePdf } from "../../common/utils/pdf-generator.util"; // FIX: import generatePdf
+import { CreateBroadcastDto } from "./dto/create-broadcast.dto";
+import { QueryCampaignsDto } from "./dto/query-campaigns.dto";
 
-const CANCELLABLE_STATUSES = ['pending', 'processing'] as const;
+const CANCELLABLE_STATUSES = ["pending", "processing"] as const;
 
 @Injectable()
 export class BroadcastService {
@@ -35,11 +36,19 @@ export class BroadcastService {
         where,
         skip,
         take: limit,
-        orderBy: { createdAt: 'desc' },
+        orderBy: { createdAt: "desc" },
       }),
       this.prisma.campaign.count({ where }),
     ]);
     return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
+  }
+
+  async findOne(userId: string, campaignId: string) {
+    const c = await this.prisma.campaign.findFirst({
+      where: { id: campaignId, userId },
+    });
+    if (!c) throw new NotFoundException({ code: ErrorCodes.NOT_FOUND });
+    return c;
   }
 
   async create(
@@ -66,11 +75,11 @@ export class BroadcastService {
         message: dto.message,
         mediaPath: file?.path,
         totalRecipients: deduped.length,
-        status: 'pending',
+        status: "pending",
       },
     });
 
-    await this.broadcastQueue.add('send', {
+    await this.broadcastQueue.add("send", {
       campaignId: campaign.id,
       userId,
       recipients: deduped,
@@ -94,7 +103,7 @@ export class BroadcastService {
       });
     }
 
-    const jobs = await this.broadcastQueue.getJobs(['waiting', 'active']);
+    const jobs = await this.broadcastQueue.getJobs(["waiting", "active"]);
     for (const job of jobs) {
       if (job.data?.campaignId === campaignId)
         await job.remove().catch(() => {});
@@ -102,8 +111,30 @@ export class BroadcastService {
 
     return this.prisma.campaign.update({
       where: { id: campaignId },
-      data: { status: 'cancelled' },
+      data: { status: "cancelled" },
     });
+  }
+
+  async exportCampaignPdf(userId: string, campaignId: string): Promise<Buffer> {
+    const campaign = await this.findOne(userId, campaignId);
+
+    const logs = await this.prisma.messageLog.findMany({
+      where: { campaignId },
+      orderBy: { timestamp: "asc" },
+      take: 5000,
+    });
+
+    const rows = logs.map((l) => ({
+      timestamp: new Date(l.timestamp).toLocaleString("id-ID"),
+      target: l.target,
+      status: l.status,
+      error: l.errorMessage?.slice(0, 60) ?? "-",
+    }));
+
+    return generatePdf(
+      `Campaign: ${campaign.name} | Total: ${campaign.totalRecipients} | Sukses: ${campaign.successCount} | Gagal: ${campaign.failedCount}`,
+      rows,
+    );
   }
 
   private async resolveRecipients(

@@ -1,23 +1,26 @@
-import { Processor, WorkerHost } from '@nestjs/bullmq';
-import { Job } from 'bullmq';
-import { Logger } from '@nestjs/common';
-import { PrismaService } from '../../../prisma/prisma.service';
-import { SessionManagerService } from '../../sessions/session-manager.service';
-import { GatewayService } from '../../../gateway/gateway.service';
-import { QueueNames } from '../../../common/constants/queue-names.constant';
-import { CampaignStatus, MessageStatus, MessageType } from '@prisma/client';
-import { toJid } from '../../../common/utils/phone-normalizer.util';
-import { MessageMedia } from 'whatsapp-web.js';
-import { validateMimeType } from '../../../common/utils/mime-validator.util';
-import * as fs from 'fs';
-import * as path from 'path';
+import { Processor, WorkerHost } from "@nestjs/bullmq";
+import { Job } from "bullmq";
+import { Logger } from "@nestjs/common";
+import { PrismaService } from "../../../prisma/prisma.service";
+import { RedisService } from "../../../redis/redis.service";
+import { SessionManagerService } from "../../sessions/session-manager.service";
+import { GatewayService } from "../../../gateway/gateway.service";
+import { QueueNames } from "../../../common/constants/queue-names.constant";
+import { CacheKeys } from "../../../common/constants/cache-keys.constant";
+import { CampaignStatus, MessageStatus, MessageType } from "@prisma/client";
+import { toJid } from "../../../common/utils/phone-normalizer.util";
+import { MessageMedia } from "whatsapp-web.js";
+import { validateMimeType } from "../../../common/utils/mime-validator.util";
+import * as fs from "fs";
+import * as path from "path";
 
 @Processor(QueueNames.BROADCAST, { concurrency: 1 })
 export class BroadcastProcessor extends WorkerHost {
-  private logger = new Logger('BroadcastProcessor');
+  private logger = new Logger("BroadcastProcessor");
 
   constructor(
     private prisma: PrismaService,
+    private redis: RedisService, // FIX: inject RedisService
     private manager: SessionManagerService,
     private gateway: GatewayService,
   ) {
@@ -33,7 +36,6 @@ export class BroadcastProcessor extends WorkerHost {
       data: { status: CampaignStatus.processing },
     });
 
-    let rrIdx = 0;
     let successCount = 0;
     let failedCount = 0;
 
@@ -44,22 +46,30 @@ export class BroadcastProcessor extends WorkerHost {
       if (mime) {
         media = new MessageMedia(
           mime,
-          buf.toString('base64'),
+          buf.toString("base64"),
           path.basename(mediaPath),
         );
       }
     }
+
+    // FIX: gunakan Redis counter yang sama dengan getHealthySession()
+    // sehingga distribusi beban merata secara global, bukan hanya per-job
+    const rrKey = CacheKeys.roundRobin(userId);
 
     for (let i = 0; i < recipients.length; i++) {
       const recipient = recipients[i];
       const jid = toJid(recipient);
       let sent = false;
 
+      // Ambil & increment counter dari Redis
+      const currentIdx = (await this.redis.get<number>(rrKey)) ?? 0;
+      await this.redis.set(rrKey, (currentIdx + 1) % sessions.length, 86400);
+
+      // Susun urutan sesi mulai dari index saat ini (round-robin)
       const orderedSessions = [
-        ...sessions.slice(rrIdx % sessions.length),
-        ...sessions.slice(0, rrIdx % sessions.length),
+        ...sessions.slice(currentIdx % sessions.length),
+        ...sessions.slice(0, currentIdx % sessions.length),
       ];
-      rrIdx++;
 
       for (const sessionId of orderedSessions) {
         try {
@@ -86,7 +96,7 @@ export class BroadcastProcessor extends WorkerHost {
           break;
         } catch (e) {
           this.logger.warn(
-            `Session ${sessionId} failed for ${recipient}: ${e.message}, trying next session`,
+            `Session ${sessionId} failed for ${recipient}: ${e.message}, trying next`,
           );
         }
       }
@@ -102,7 +112,7 @@ export class BroadcastProcessor extends WorkerHost {
             message,
             messageType: MessageType.text,
             status: MessageStatus.failed,
-            errorMessage: 'All sessions failed',
+            errorMessage: "All sessions failed",
           },
         });
       }
@@ -121,6 +131,7 @@ export class BroadcastProcessor extends WorkerHost {
         failedCount,
       });
 
+      // Jeda acak 1–3 detik (anti-spam)
       const delay = 1000 + Math.random() * 2000;
       await new Promise((r) => setTimeout(r, delay));
     }

@@ -6,6 +6,7 @@ import { QueueNames } from "../../common/constants/queue-names.constant";
 import { ErrorCodes } from "../../common/constants/error-codes.constant";
 import { generateWebhookSecret } from "../../common/utils/token-generator.util";
 import { generateHmacSignature } from "../../common/utils/hmac.util";
+import { WEBHOOK_RETRY_DELAYS_MS } from "./processors/webhook.processor";
 import { UpdateWebhookDto } from "./dto/update-webhook.dto";
 import axios from "axios";
 
@@ -59,7 +60,7 @@ export class WebhookService {
     const start = Date.now();
     try {
       const res = await axios.post(config.webhookUrl, payload, {
-        timeout: 10000,
+        timeout: 10_000,
       });
       return {
         targetStatus: res.status,
@@ -86,11 +87,37 @@ export class WebhookService {
     const headers: any = { "Content-Type": "application/json" };
     if (signature) headers["X-Hub-Signature"] = signature;
 
-    await this.webhookQueue.add("dispatch", {
-      userId,
-      url: config.webhookUrl,
-      payload: body,
-      headers,
+    // Catat di database sebelum enqueue
+    const record = await this.prisma.webhookQueue.create({
+      data: {
+        userId,
+        url: config.webhookUrl,
+        payload: JSON.parse(body),
+        headers,
+        status: "pending",
+        maxRetries: 5,
+      },
     });
+
+    // FIX: set attempts & custom backoff sesuai WEBHOOK_RETRY_DELAYS_MS
+    await this.webhookQueue.add(
+      "dispatch",
+      {
+        userId,
+        url: config.webhookUrl,
+        payload: body,
+        headers,
+        dbId: record.id,
+      },
+      {
+        attempts: 5,
+        backoff: {
+          // BullMQ 'custom' backoff — nilai delay diambil dari array berdasarkan attemptsMade
+          type: "custom",
+        },
+        removeOnComplete: true,
+        removeOnFail: false,
+      },
+    );
   }
 }

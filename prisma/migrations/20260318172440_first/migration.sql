@@ -521,3 +521,14 @@ ALTER TABLE `workspace_members` ADD CONSTRAINT `workspace_members_workspaceId_fk
 
 -- AddForeignKey
 ALTER TABLE `workspace_members` ADD CONSTRAINT `workspace_members_userId_fkey` FOREIGN KEY (`userId`) REFERENCES `users`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+
+
+-- 1. ApiKey: tambah isSandbox dan expiresAt
+ALTER TABLE api_keys
+  ADD COLUMN is_sandbox BOOLEAN NOT NULL DEFAULT FALSE
+    COMMENT 'Mode sandbox: request tidak dikirim ke WhatsApp sungguhan',
+  ADD COLUMN expires_at DATETIME NULL
+    COMMENT 'Tanggal kadaluarsa token (null = tidak expired)';
+
+-- Index untuk cek expired token
+CREATE INDEX idx_api_keys_expires_at ON api_keys(expires_at);

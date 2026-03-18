@@ -39,19 +39,35 @@ export class ApiKeyGuard implements CanActivate {
       await this.redis.set(cacheKey, apiKey, 300);
     }
 
-    if (!apiKey.user.isActive)
+    // FIX: Cek token expired
+    if (apiKey.expiresAt && new Date(apiKey.expiresAt) < new Date()) {
+      throw new UnauthorizedException({
+        code: ErrorCodes.UNAUTHORIZED,
+        message: "API key telah kadaluarsa.",
+      });
+    }
+
+    if (!apiKey.user.isActive) {
       throw new ForbiddenException({ code: ErrorCodes.ACCOUNT_DISABLED });
+    }
 
     const clientIp = req.ip || req.connection?.remoteAddress;
     if (apiKey.ipWhitelist && !isIpAllowed(clientIp, apiKey.ipWhitelist)) {
       throw new ForbiddenException({ code: ErrorCodes.IP_NOT_WHITELISTED });
     }
 
-    req.user = { ...apiKey.user, keyId: apiKey.id };
+    // FIX: Tandai request sebagai sandbox jika token dalam mode sandbox
+    req.user = {
+      ...apiKey.user,
+      keyId: apiKey.id,
+      isSandbox: apiKey.isSandbox ?? false,
+    };
+
     await this.prisma.apiKey.update({
       where: { id: apiKey.id },
       data: { lastUsedAt: new Date() },
     });
+
     return true;
   }
 }

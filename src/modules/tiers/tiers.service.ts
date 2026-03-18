@@ -53,6 +53,7 @@ export class TiersService {
         userId: dto.userId,
         tierId: dto.tierId,
         expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : undefined,
+        isGrace: false,
       },
       update: {
         tierId: dto.tierId,
@@ -60,14 +61,52 @@ export class TiersService {
         isGrace: false,
       },
     });
+
     await this.audit.log({
       userId: adminId,
       userEmail: adminEmail,
       action: AuditAction.ASSIGN_TIER,
-      details: dto,
+      details: {
+        targetUserId: dto.userId,
+        tierId: dto.tierId,
+        tierName: tier.name,
+      },
       ip,
       userAgent: ua,
     });
+
     return result;
+  }
+
+  /**
+   * FIX: Prisma JSON filter `path` harus berupa string, bukan string[].
+   * Untuk MySQL, gunakan string_contains atau raw query karena
+   * Prisma JSON filter dengan path tidak mendukung MySQL secara penuh.
+   * Solusi: filter di aplikasi setelah query semua ASSIGN_TIER logs.
+   */
+  async getTierHistory(userId: string, page = 1, limit = 20) {
+    const skip = (page - 1) * limit;
+
+    // Ambil semua ASSIGN_TIER logs lalu filter di aplikasi
+    // karena Prisma JSON path filter tidak konsisten di MySQL
+    const allLogs = await this.prisma.auditLog.findMany({
+      where: { action: AuditAction.ASSIGN_TIER },
+      orderBy: { timestamp: "desc" },
+    });
+
+    // Filter: details.targetUserId === userId
+    const filtered = allLogs.filter((log) => {
+      try {
+        const details = log.details as any;
+        return details?.targetUserId === userId;
+      } catch {
+        return false;
+      }
+    });
+
+    const total = filtered.length;
+    const data = filtered.slice(skip, skip + limit);
+
+    return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 }

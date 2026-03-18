@@ -66,9 +66,10 @@ export class SchedulerService {
     });
   }
 
+  // cancel() hanya untuk status pending — tidak bisa cancel yang sudah sent
   async cancel(userId: string, id: string) {
     const msg = await this.findOwned(userId, id);
-    if (msg.status === ScheduledMessageStatus.sent)
+    if (msg.status !== ScheduledMessageStatus.pending)
       throw new BadRequestException({ code: ErrorCodes.MESSAGE_ALREADY_SENT });
     return this.prisma.scheduledMessage.update({
       where: { id },
@@ -76,10 +77,14 @@ export class SchedulerService {
     });
   }
 
+  /**
+   * FIX: remove() sebelumnya menolak hapus jika status 'sent'.
+   * Sesuai API doc, DELETE /scheduler/:id bisa menghapus record apapun
+   * (termasuk yang sudah sent/failed/cancelled) — ini adalah hard delete dari DB.
+   * Pembatasan hanya berlaku untuk cancel(), bukan delete().
+   */
   async remove(userId: string, id: string) {
-    const msg = await this.findOwned(userId, id);
-    if (msg.status === ScheduledMessageStatus.sent)
-      throw new BadRequestException({ code: ErrorCodes.MESSAGE_ALREADY_SENT });
+    await this.findOwned(userId, id);
     await this.prisma.scheduledMessage.delete({ where: { id } });
   }
 
@@ -96,7 +101,7 @@ export class SchedulerService {
     for (const msg of due) {
       try {
         const client = this.manager.getClient(msg.sessionId);
-        if (!client) continue; // Skip, retry next tick
+        if (!client) continue;
 
         const jid = toJid(msg.target);
         await this.manager.sendMessage(msg.sessionId, jid, msg.message);
@@ -105,7 +110,6 @@ export class SchedulerService {
           data: { status: ScheduledMessageStatus.sent },
         });
 
-        // Handle recurrence
         if (msg.recurrenceType !== "none") {
           const nextTime = nextRecurrence(
             msg.scheduledTime,

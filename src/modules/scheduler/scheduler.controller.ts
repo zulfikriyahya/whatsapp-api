@@ -13,18 +13,22 @@ import {
 import { ApiTags, ApiOperation } from "@nestjs/swagger";
 import { SchedulerService } from "./scheduler.service";
 import { JwtAuthGuard } from "../../common/guards/jwt-auth.guard";
+import {
+  TierFeatureGuard,
+  RequireFeature,
+} from "../../common/guards/tier-feature.guard";
 import { CurrentUser } from "../../common/decorators/current-user.decorator";
 import { CreateScheduledMessageDto } from "./dto/create-scheduled-message.dto";
 import { QueryScheduledMessagesDto } from "./dto/query-scheduled-messages.dto";
 
 @ApiTags("Scheduler")
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, TierFeatureGuard)
+@RequireFeature("scheduler")
 @Controller({ path: "scheduler", version: "1" })
 export class SchedulerController {
   constructor(private svc: SchedulerService) {}
 
   @Get()
-  @ApiOperation({ summary: "Daftar pesan terjadwal" })
   async findAll(
     @CurrentUser() u: any,
     @Query() dto: QueryScheduledMessagesDto,
@@ -41,23 +45,17 @@ export class SchedulerController {
       },
     };
   }
-
   @Post()
-  @ApiOperation({ summary: "Buat pesan terjadwal" })
   async create(@CurrentUser() u: any, @Body() dto: CreateScheduledMessageDto) {
     return { status: true, data: await this.svc.create(u.id, dto) };
   }
-
   @Post(":id/cancel")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: "Batalkan pesan terjadwal" })
   async cancel(@CurrentUser() u: any, @Param("id") id: string) {
     return { status: true, data: await this.svc.cancel(u.id, id) };
   }
-
   @Delete(":id")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: "Hapus pesan terjadwal" })
   async remove(@CurrentUser() u: any, @Param("id") id: string) {
     await this.svc.remove(u.id, id);
     return { status: true };

@@ -7,6 +7,7 @@ import { AuthService } from "./auth.service";
 import { GoogleStrategy } from "./strategies/google.strategy";
 import { JwtStrategy } from "./strategies/jwt.strategy";
 import { AuditModule } from "../audit/audit.module";
+import { NotificationsModule } from "../notifications/notifications.module";
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { AuditModule } from "../audit/audit.module";
       }),
     }),
     AuditModule,
+    NotificationsModule, // FIX: diperlukan untuk notifyNewIpLogin
   ],
   controllers: [AuthController],
   providers: [AuthService, GoogleStrategy, JwtStrategy],

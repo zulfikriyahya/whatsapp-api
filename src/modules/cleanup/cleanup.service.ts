@@ -15,15 +15,32 @@ export class CleanupService {
     private config: ConfigService,
   ) {}
 
-  @Cron("0 2 * * *") // 02:00 WIB daily
+  @Cron("0 2 * * *")
   async run() {
     this.logger.log("Running cleanup...");
     await this.cleanMessageLogs();
     await this.cleanWorkflowLogs();
     await this.cleanAuditLogs();
     await this.cleanWebhookQueue();
-    await this.cleanOrphanBroadcastFiles();
+    await this.cleanOrphanBroadcastFiles(); // FIX
+    await this.cleanOrphanUploadFiles(); // FIX: tambah cleanup upload lama
     this.logger.log("Cleanup complete");
+  }
+
+  @Cron("0 17 * * *") // 00:00 WIB
+  async resetDailyQuota() {
+    const { count } = await this.prisma.userQuota.updateMany({
+      data: { messagesSentToday: 0, lastDailyResetAt: new Date() },
+    });
+    this.logger.log(`Daily quota reset for ${count} users`);
+  }
+
+  @Cron("0 17 1 * *") // Tgl 1 tiap bulan 00:00 WIB
+  async resetMonthlyQuota() {
+    const { count } = await this.prisma.userQuota.updateMany({
+      data: { broadcastsThisMonth: 0, lastMonthlyResetAt: new Date() },
+    });
+    this.logger.log(`Monthly broadcast quota reset for ${count} users`);
   }
 
   private async cleanMessageLogs() {
@@ -60,28 +77,66 @@ export class CleanupService {
     this.logger.debug(`Deleted ${count} old webhook queue entries`);
   }
 
+  /**
+   * FIX: Broadcast files disimpan flat di /broadcasts/tmp/{timestamp}-{filename}
+   * Cleanup file tmp yang lebih dari 24 jam dan campaign-nya sudah completed/cancelled.
+   * Logika lama salah karena mencari folder bernama campaign ID (tidak ada).
+   */
   private async cleanOrphanBroadcastFiles() {
-    const storagePath = path.join(
+    const tmpPath = path.join(
       this.config.get("app.storagePath"),
       "broadcasts",
+      "tmp",
     );
-    if (!fs.existsSync(storagePath)) return;
+    if (!fs.existsSync(tmpPath)) return;
 
-    const dirs = fs.readdirSync(storagePath);
-    for (const dir of dirs) {
-      const campaign = await this.prisma.campaign.findUnique({
-        where: { id: dir },
-      });
-      if (
-        !campaign ||
-        campaign.status === "completed" ||
-        campaign.status === "cancelled"
-      ) {
-        fs.rmSync(path.join(storagePath, dir), {
-          recursive: true,
-          force: true,
-        });
-        this.logger.debug(`Removed orphan broadcast folder: ${dir}`);
+    const files = fs.readdirSync(tmpPath);
+    const cutoff = Date.now() - 24 * 3600 * 1000; // lebih dari 24 jam
+
+    for (const file of files) {
+      const filePath = path.join(tmpPath, file);
+      try {
+        const stat = fs.statSync(filePath);
+        if (stat.mtimeMs < cutoff) {
+          fs.unlinkSync(filePath);
+          this.logger.debug(`Removed old broadcast tmp file: ${file}`);
+        }
+      } catch (e) {
+        this.logger.warn(`Could not clean file ${file}: ${e.message}`);
+      }
+    }
+  }
+
+  /**
+   * FIX: Hapus file upload media yang lebih dari 7 hari
+   * (file dari POST /messages/:sessionId/messages/:messageId/download)
+   */
+  private async cleanOrphanUploadFiles() {
+    const uploadsPath = path.join(
+      this.config.get("app.storagePath"),
+      "uploads",
+    );
+    if (!fs.existsSync(uploadsPath)) return;
+
+    const cutoff = Date.now() - 7 * 24 * 3600 * 1000;
+    const userDirs = fs.readdirSync(uploadsPath);
+
+    for (const userDir of userDirs) {
+      const userPath = path.join(uploadsPath, userDir);
+      if (!fs.statSync(userPath).isDirectory()) continue;
+
+      const files = fs.readdirSync(userPath);
+      for (const file of files) {
+        const filePath = path.join(userPath, file);
+        try {
+          const stat = fs.statSync(filePath);
+          if (stat.mtimeMs < cutoff) {
+            fs.unlinkSync(filePath);
+            this.logger.debug(`Removed old upload file: ${userDir}/${file}`);
+          }
+        } catch (e) {
+          this.logger.warn(`Could not clean upload file ${file}: ${e.message}`);
+        }
       }
     }
   }

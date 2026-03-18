@@ -6,6 +6,7 @@ import {
   Delete,
   Param,
   Body,
+  Query,
   UseGuards,
   Req,
   HttpCode,
@@ -37,14 +38,12 @@ export class TiersController {
 
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Post()
-  @ApiOperation({ summary: "[Admin] Buat tier baru" })
   async create(@Body() dto: CreateTierDto) {
     return { status: true, data: await this.svc.create(dto) };
   }
 
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Put(":id")
-  @ApiOperation({ summary: "[Admin] Update tier" })
   async update(@Param("id") id: string, @Body() dto: UpdateTierDto) {
     return { status: true, data: await this.svc.update(id, dto) };
   }
@@ -52,7 +51,6 @@ export class TiersController {
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Delete(":id")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: "[Admin] Hapus tier" })
   async remove(@Param("id") id: string) {
     await this.svc.remove(id);
     return { status: true };
@@ -60,7 +58,6 @@ export class TiersController {
 
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Post("assign")
-  @ApiOperation({ summary: "[Admin] Assign tier ke user" })
   async assign(
     @CurrentUser() u: any,
     @Body() dto: AssignTierDto,
@@ -75,6 +72,24 @@ export class TiersController {
         req.ip,
         req.headers["user-agent"],
       ),
+    };
+  }
+
+  /**
+   * FIX: Riwayat perubahan tier per user — query audit log dengan
+   * filter action ASSIGN_TIER dan details.userId = targetUserId
+   */
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @Get("history/:userId")
+  @ApiOperation({ summary: "[Admin] Riwayat perubahan tier user" })
+  async getTierHistory(
+    @Param("userId") userId: string,
+    @Query("page") page = 1,
+    @Query("limit") limit = 20,
+  ) {
+    return {
+      status: true,
+      data: await this.svc.getTierHistory(userId, +page, +limit),
     };
   }
 }

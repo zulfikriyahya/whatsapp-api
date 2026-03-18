@@ -14,11 +14,16 @@ import { ApiTags, ApiOperation } from "@nestjs/swagger";
 import { Request } from "express";
 import { ApiKeysService } from "./api-keys.service";
 import { JwtAuthGuard } from "../../common/guards/jwt-auth.guard";
+import {
+  TierFeatureGuard,
+  RequireFeature,
+} from "../../common/guards/tier-feature.guard";
 import { CurrentUser } from "../../common/decorators/current-user.decorator";
 import { CreateApiKeyDto } from "./dto/create-api-key.dto";
 
 @ApiTags("API Keys")
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, TierFeatureGuard)
+@RequireFeature("api_access")
 @Controller({ path: "keys", version: "1" })
 export class ApiKeysController {
   constructor(private svc: ApiKeysService) {}

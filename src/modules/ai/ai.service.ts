@@ -2,9 +2,12 @@ import {
   Injectable,
   Logger,
   ServiceUnavailableException,
+  Inject,
+  forwardRef,
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../../prisma/prisma.service";
+import { NotificationsService } from "../notifications/notifications.service";
 import { ErrorCodes } from "../../common/constants/error-codes.constant";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
@@ -20,6 +23,9 @@ export class AiService {
   constructor(
     private config: ConfigService,
     private prisma: PrismaService,
+    // FIX: forwardRef karena NotificationsModule → GatewayModule → SessionsModule bisa circular
+    @Inject(forwardRef(() => NotificationsService))
+    private notifications: NotificationsService,
   ) {
     this.model = config.get("gemini.model");
     this.timeoutMs = config.get("gemini.timeoutMs");
@@ -42,7 +48,6 @@ export class AiService {
     if (this.isDisabled)
       throw new ServiceUnavailableException({ code: ErrorCodes.AI_DISABLED });
 
-    // Check user-level API key override
     const userSetting = await this.prisma.userSetting.findUnique({
       where: { userId },
     });
@@ -83,6 +88,15 @@ export class AiService {
       if (e.status === 403 || e.status === 400) {
         this.isDisabled = true;
         this.logger.error("Gemini API key invalid — AI disabled");
+
+        // FIX: Kirim notifikasi ke user yang bersangkutan + admin email
+        const user = await this.prisma.user
+          .findUnique({ where: { id: userId }, select: { email: true } })
+          .catch(() => null);
+        if (user?.email) {
+          this.notifications.notifyAiDisabled(userId, user.email);
+        }
+
         throw new ServiceUnavailableException({ code: ErrorCodes.AI_DISABLED });
       }
       this.logger.error(`Gemini error: ${e.message}`);

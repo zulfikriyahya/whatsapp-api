@@ -1,9 +1,12 @@
-import { IsString, Length } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
+import { IsString, IsNotEmpty } from "class-validator";
+import { ApiProperty } from "@nestjs/swagger";
 
 export class Enable2faDto {
-  @ApiProperty()
+  @ApiProperty({
+    description: "Kode TOTP 6 digit atau backup code (format: XXXXX-XXXXX)",
+    example: "123456",
+  })
   @IsString()
-  @Length(6, 6)
+  @IsNotEmpty()
   code: string;
 }

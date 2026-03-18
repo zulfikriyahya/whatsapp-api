@@ -109,6 +109,28 @@ export class UsersService {
     });
   }
 
+  // FIX: self-delete — user menghapus akunnya sendiri
+  async deleteSelf(userId: string, userEmail: string, ip: string, ua: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException({ code: ErrorCodes.NOT_FOUND });
+
+    // Catat audit log sebelum data user dihapus
+    await this.audit.log({
+      userId,
+      userEmail,
+      action: AuditAction.DELETE_USER,
+      details: { selfDelete: true },
+      ip,
+      userAgent: ua,
+    });
+
+    // Hapus cache
+    await this.redis.del(CacheKeys.user(userId));
+
+    // Hapus user — Prisma Cascade akan menghapus semua relasi terkait
+    await this.prisma.user.delete({ where: { id: userId } });
+  }
+
   async updateQuota(targetId: string, dto: UpdateQuotaDto) {
     return this.prisma.userQuota.upsert({
       where: { userId: targetId },

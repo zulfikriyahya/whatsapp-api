@@ -13,6 +13,8 @@ import {
 } from "@nestjs/common";
 import { ApiTags, ApiOperation } from "@nestjs/swagger";
 import { Request } from "express";
+import { Response } from "express";
+import { Res } from "@nestjs/common";
 import { UsersService } from "./users.service";
 import { JwtAuthGuard } from "../../common/guards/jwt-auth.guard";
 import { RolesGuard } from "../../common/guards/roles.guard";
@@ -40,6 +42,21 @@ export class UsersController {
   @ApiOperation({ summary: "Update profil" })
   async updateProfile(@CurrentUser() u: any, @Body() dto: UpdateProfileDto) {
     return { status: true, data: await this.svc.updateProfile(u.id, dto) };
+  }
+
+  // FIX: endpoint self-delete akun (sesuai doc 1 "Hapus akun dengan konfirmasi")
+  @Delete("me")
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "Hapus akun sendiri (self-delete)" })
+  async deleteSelf(
+    @CurrentUser() u: any,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    await this.svc.deleteSelf(u.id, u.email, req.ip, req.headers["user-agent"]);
+    // Hapus cookie setelah akun dihapus
+    res.clearCookie("auth_token");
+    return { status: true, data: { message: "Akun berhasil dihapus." } };
   }
 
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)

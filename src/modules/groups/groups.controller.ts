@@ -7,46 +7,47 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
-} from '@nestjs/common';
-import { ApiTags, ApiOperation } from '@nestjs/swagger';
-import { GroupsService } from './groups.service';
-import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { CreateGroupDto } from './dto/create-group.dto';
-import { ManageMembersDto } from './dto/manage-members.dto';
-import { ManageAdminsDto } from './dto/manage-admins.dto';
-import { UpdateGroupDto } from './dto/update-group.dto';
-import { MembershipRequestDto } from './dto/membership-request.dto';
+} from "@nestjs/common";
+import { ApiTags, ApiOperation } from "@nestjs/swagger";
+import { GroupsService } from "./groups.service";
+import { JwtAuthGuard } from "../../common/guards/jwt-auth.guard";
+import { CreateGroupDto } from "./dto/create-group.dto";
+import { ManageMembersDto } from "./dto/manage-members.dto";
+import { ManageAdminsDto } from "./dto/manage-admins.dto";
+import { UpdateGroupDto } from "./dto/update-group.dto";
+import { MembershipRequestDto } from "./dto/membership-request.dto";
 
-@ApiTags('Groups')
+@ApiTags("Groups")
 @UseGuards(JwtAuthGuard)
-@Controller({ path: 'groups', version: '1' })
+@Controller({ path: "groups", version: "1" })
 export class GroupsController {
   constructor(private svc: GroupsService) {}
 
-  @Post()
-  @ApiOperation({ summary: 'Buat grup baru' })
-  async create(@Param('sessionId') sid: string, @Body() dto: CreateGroupDto) {
+  // FIX: route kini menjadi POST /groups/:sessionId agar param :sessionId terbaca
+  @Post(":sessionId")
+  @ApiOperation({ summary: "Buat grup baru" })
+  async create(@Param("sessionId") sid: string, @Body() dto: CreateGroupDto) {
     return {
       status: true,
       data: await this.svc.create(sid, dto.name, dto.participants),
     };
   }
 
-  @Get(':sessionId/:groupId')
-  @ApiOperation({ summary: 'Info grup' })
+  @Get(":sessionId/:groupId")
+  @ApiOperation({ summary: "Info grup" })
   async getInfo(
-    @Param('sessionId') sid: string,
-    @Param('groupId') gid: string,
+    @Param("sessionId") sid: string,
+    @Param("groupId") gid: string,
   ) {
     return { status: true, data: await this.svc.getInfo(sid, gid) };
   }
 
-  @Post(':sessionId/:groupId/participants/add')
+  @Post(":sessionId/:groupId/participants/add")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Tambah anggota grup' })
+  @ApiOperation({ summary: "Tambah anggota grup" })
   async addParticipants(
-    @Param('sessionId') sid: string,
-    @Param('groupId') gid: string,
+    @Param("sessionId") sid: string,
+    @Param("groupId") gid: string,
     @Body() dto: ManageMembersDto,
   ) {
     return {
@@ -55,12 +56,12 @@ export class GroupsController {
     };
   }
 
-  @Post(':sessionId/:groupId/participants/remove')
+  @Post(":sessionId/:groupId/participants/remove")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Hapus anggota grup' })
+  @ApiOperation({ summary: "Hapus anggota grup" })
   async removeParticipants(
-    @Param('sessionId') sid: string,
-    @Param('groupId') gid: string,
+    @Param("sessionId") sid: string,
+    @Param("groupId") gid: string,
     @Body() dto: ManageMembersDto,
   ) {
     return {
@@ -69,12 +70,12 @@ export class GroupsController {
     };
   }
 
-  @Post(':sessionId/:groupId/participants/promote')
+  @Post(":sessionId/:groupId/participants/promote")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Promosi anggota menjadi admin' })
+  @ApiOperation({ summary: "Promosi anggota menjadi admin" })
   async promoteParticipants(
-    @Param('sessionId') sid: string,
-    @Param('groupId') gid: string,
+    @Param("sessionId") sid: string,
+    @Param("groupId") gid: string,
     @Body() dto: ManageAdminsDto,
   ) {
     return {
@@ -83,12 +84,12 @@ export class GroupsController {
     };
   }
 
-  @Post(':sessionId/:groupId/participants/demote')
+  @Post(":sessionId/:groupId/participants/demote")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Demosi admin menjadi anggota biasa' })
+  @ApiOperation({ summary: "Demosi admin menjadi anggota biasa" })
   async demoteParticipants(
-    @Param('sessionId') sid: string,
-    @Param('groupId') gid: string,
+    @Param("sessionId") sid: string,
+    @Param("groupId") gid: string,
     @Body() dto: ManageAdminsDto,
   ) {
     return {
@@ -97,12 +98,12 @@ export class GroupsController {
     };
   }
 
-  @Post(':sessionId/:groupId/update')
+  @Post(":sessionId/:groupId/update")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Update nama dan deskripsi grup' })
+  @ApiOperation({ summary: "Update nama dan deskripsi grup" })
   async updateGroup(
-    @Param('sessionId') sid: string,
-    @Param('groupId') gid: string,
+    @Param("sessionId") sid: string,
+    @Param("groupId") gid: string,
     @Body() dto: UpdateGroupDto,
   ) {
     const results: any = {};
@@ -117,37 +118,37 @@ export class GroupsController {
     return { status: true, data: results };
   }
 
-  @Post(':sessionId/:groupId/leave')
+  @Post(":sessionId/:groupId/leave")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Keluar dari grup' })
-  async leave(@Param('sessionId') sid: string, @Param('groupId') gid: string) {
+  @ApiOperation({ summary: "Keluar dari grup" })
+  async leave(@Param("sessionId") sid: string, @Param("groupId") gid: string) {
     return { status: true, data: await this.svc.leave(sid, gid) };
   }
 
-  @Get(':sessionId/:groupId/invite')
-  @ApiOperation({ summary: 'Dapatkan invite link grup' })
+  @Get(":sessionId/:groupId/invite")
+  @ApiOperation({ summary: "Dapatkan invite link grup" })
   async getInviteCode(
-    @Param('sessionId') sid: string,
-    @Param('groupId') gid: string,
+    @Param("sessionId") sid: string,
+    @Param("groupId") gid: string,
   ) {
     return { status: true, data: await this.svc.getInviteCode(sid, gid) };
   }
 
-  @Post(':sessionId/:groupId/invite/revoke')
+  @Post(":sessionId/:groupId/invite/revoke")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Revoke invite link grup' })
+  @ApiOperation({ summary: "Revoke invite link grup" })
   async revokeInvite(
-    @Param('sessionId') sid: string,
-    @Param('groupId') gid: string,
+    @Param("sessionId") sid: string,
+    @Param("groupId") gid: string,
   ) {
     return { status: true, data: await this.svc.revokeInvite(sid, gid) };
   }
 
-  @Post(':sessionId/join')
+  @Post(":sessionId/join")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Join grup via invite code' })
+  @ApiOperation({ summary: "Join grup via invite code" })
   async join(
-    @Param('sessionId') sid: string,
+    @Param("sessionId") sid: string,
     @Body() body: { inviteCode: string },
   ) {
     return {
@@ -156,21 +157,21 @@ export class GroupsController {
     };
   }
 
-  @Get(':sessionId/invite/:inviteCode/info')
-  @ApiOperation({ summary: 'Dapatkan info grup sebelum join' })
+  @Get(":sessionId/invite/:inviteCode/info")
+  @ApiOperation({ summary: "Dapatkan info grup sebelum join" })
   async getInviteInfo(
-    @Param('sessionId') sid: string,
-    @Param('inviteCode') code: string,
+    @Param("sessionId") sid: string,
+    @Param("inviteCode") code: string,
   ) {
     return { status: true, data: await this.svc.getInviteInfo(sid, code) };
   }
 
-  @Post(':sessionId/:groupId/membership-request')
+  @Post(":sessionId/:groupId/membership-request")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Approve atau reject join request' })
+  @ApiOperation({ summary: "Approve atau reject join request" })
   async handleMembershipRequest(
-    @Param('sessionId') sid: string,
-    @Param('groupId') gid: string,
+    @Param("sessionId") sid: string,
+    @Param("groupId") gid: string,
     @Body() dto: MembershipRequestDto,
   ) {
     return {
@@ -179,11 +180,11 @@ export class GroupsController {
     };
   }
 
-  @Get(':sessionId/:groupId/membership-requests')
-  @ApiOperation({ summary: 'Dapatkan daftar join request yang pending' })
+  @Get(":sessionId/:groupId/membership-requests")
+  @ApiOperation({ summary: "Dapatkan daftar join request yang pending" })
   async getMembershipRequests(
-    @Param('sessionId') sid: string,
-    @Param('groupId') gid: string,
+    @Param("sessionId") sid: string,
+    @Param("groupId") gid: string,
   ) {
     return {
       status: true,
@@ -191,11 +192,11 @@ export class GroupsController {
     };
   }
 
-  @Get(':sessionId/contacts/:contactId/common-groups')
-  @ApiOperation({ summary: 'Dapatkan grup yang sama antara bot dan kontak' })
+  @Get(":sessionId/contacts/:contactId/common-groups")
+  @ApiOperation({ summary: "Dapatkan grup yang sama antara bot dan kontak" })
   async getCommonGroups(
-    @Param('sessionId') sid: string,
-    @Param('contactId') cid: string,
+    @Param("sessionId") sid: string,
+    @Param("contactId") cid: string,
   ) {
     return { status: true, data: await this.svc.getCommonGroups(sid, cid) };
   }
