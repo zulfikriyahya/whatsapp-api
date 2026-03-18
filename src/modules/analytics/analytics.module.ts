@@ -1,9 +1,3 @@
-// import { Module } from "@nestjs/common";
-// import { AnalyticsController } from "./analytics.controller";
-// import { AnalyticsService } from "./analytics.service";
-
-// @Module({ controllers: [AnalyticsController], providers: [AnalyticsService] })
-// export class AnalyticsModule {}
 import { Module } from "@nestjs/common";
 import { BullModule } from "@nestjs/bullmq";
 import { AnalyticsController } from "./analytics.controller";

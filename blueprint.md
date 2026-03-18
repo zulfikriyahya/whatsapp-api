@@ -87,7 +87,8 @@ module.exports = {
     "prisma:migrate:prod": "prisma migrate deploy",
     "prisma:seed": "ts-node prisma/seed.ts",
     "prisma:studio": "prisma studio",
-    "storage:init": "mkdir -p storage/sessions storage/uploads storage/exports storage/broadcasts/tmp"
+    "storage:init": "mkdir -p storage/sessions storage/uploads storage/exports storage/broadcasts/tmp",
+    "postinstall": "prisma generate"
   },
   "dependencies": {
     "@google/generative-ai": "^0.21.0",
@@ -1169,7 +1170,6 @@ import { ValidationPipe, VersioningType } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { SwaggerModule, DocumentBuilder } from "@nestjs/swagger";
 import { IoAdapter } from "@nestjs/platform-socket.io";
-import cookieParser from "cookie-parser";
 import helmet from "helmet";
 import { AppModule } from "./app.module";
 import { HttpExceptionFilter } from "./common/filters/http-exception.filter";
@@ -1177,6 +1177,7 @@ import { PrismaExceptionFilter } from "./common/filters/prisma-exception.filter"
 import { ResponseInterceptor } from "./common/interceptors/response.interceptor";
 import { LoggingInterceptor } from "./common/interceptors/logging.interceptor";
 import { TimeoutInterceptor } from "./common/interceptors/timeout.interceptor";
+import * as cookieParser from "cookie-parser";
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
@@ -2854,15 +2855,6 @@ export class AppGateway
 ## File : `src/gateway/gateway.module.ts`
 
 ```ts
-// import { Module } from "@nestjs/common";
-// import { AppGateway } from "./app.gateway";
-// import { GatewayService } from "./gateway.service";
-
-// @Module({
-//   providers: [AppGateway, GatewayService],
-//   exports: [GatewayService],
-// })
-// export class GatewayModule {}
 import { Module } from "@nestjs/common";
 import { JwtModule } from "@nestjs/jwt";
 import { ConfigService } from "@nestjs/config";
@@ -3115,12 +3107,6 @@ export class AnalyticsController {
 ## File : `src/modules/analytics/analytics.module.ts`
 
 ```ts
-// import { Module } from "@nestjs/common";
-// import { AnalyticsController } from "./analytics.controller";
-// import { AnalyticsService } from "./analytics.service";
-
-// @Module({ controllers: [AnalyticsController], providers: [AnalyticsService] })
-// export class AnalyticsModule {}
 import { Module } from "@nestjs/common";
 import { BullModule } from "@nestjs/bullmq";
 import { AnalyticsController } from "./analytics.controller";
@@ -4498,20 +4484,6 @@ export class AutoReplyEngine {
 ## File : `src/modules/auto-reply/auto-reply.module.ts`
 
 ```ts
-// import { Module } from "@nestjs/common";
-// import { AutoReplyController } from "./auto-reply.controller";
-// import { AutoReplyService } from "./auto-reply.service";
-// import { AutoReplyEngine } from "./auto-reply.engine";
-// import { AiModule } from "../ai/ai.module";
-
-// @Module({
-//   imports: [AiModule],
-//   controllers: [AutoReplyController],
-//   providers: [AutoReplyService, AutoReplyEngine],
-//   exports: [AutoReplyEngine],
-// })
-// export class AutoReplyModule {}
-
 import { Module, forwardRef } from "@nestjs/common";
 import { AutoReplyController } from "./auto-reply.controller";
 import { AutoReplyService } from "./auto-reply.service";
@@ -8971,15 +8943,6 @@ export class EmailService {
 ## File : `src/modules/notifications/notifications.module.ts`
 
 ```ts
-// import { Module } from "@nestjs/common";
-// import { NotificationsService } from "./notifications.service";
-// import { EmailService } from "./email.service";
-
-// @Module({
-//   providers: [NotificationsService, EmailService],
-//   exports: [NotificationsService],
-// })
-// export class NotificationsModule {}
 import { Module } from "@nestjs/common";
 import { NotificationsService } from "./notifications.service";
 import { EmailService } from "./email.service";
@@ -9873,18 +9836,6 @@ export class SessionManagerService implements OnModuleInit, OnModuleDestroy {
   private clients = new Map<string, Client>();
   private reconnectTimers = new Map<string, NodeJS.Timeout>();
 
-  // constructor(
-  //   private prisma: PrismaService,
-  //   private redis: RedisService,
-  //   private gateway: GatewayService,
-  //   private notifications: NotificationsService,
-  //   private inbox: InboxService,
-  //   private autoReply: AutoReplyEngine,
-  //   private workflow: WorkflowEngine,
-  //   private webhook: WebhookService,
-  //   private cfg: ConfigService,
-  // ) {}
-
   constructor(
     private prisma: PrismaService,
     private redis: RedisService,
@@ -10291,34 +10242,6 @@ export class SessionsController {
 ## File : `src/modules/sessions/sessions.module.ts`
 
 ```ts
-// import { Module } from "@nestjs/common";
-// import { SessionsController } from "./sessions.controller";
-// import { SessionsService } from "./sessions.service";
-// import { SessionManagerService } from "./session-manager.service";
-// import { WarmingService } from "./warming.service";
-// import { AuditModule } from "../audit/audit.module";
-// import { GatewayModule } from "../../gateway/gateway.module";
-// import { NotificationsModule } from "../notifications/notifications.module";
-// import { InboxModule } from "../inbox/inbox.module";
-// import { AutoReplyModule } from "../auto-reply/auto-reply.module";
-// import { WorkflowModule } from "../workflow/workflow.module";
-// import { WebhookModule } from "../webhook/webhook.module";
-
-// @Module({
-//   imports: [
-//     AuditModule,
-//     GatewayModule,
-//     NotificationsModule,
-//     InboxModule,
-//     AutoReplyModule,
-//     WorkflowModule,
-//     WebhookModule,
-//   ],
-//   controllers: [SessionsController],
-//   providers: [SessionsService, SessionManagerService, WarmingService],
-//   exports: [SessionManagerService, SessionsService],
-// })
-// export class SessionsModule {}
 import { Module, forwardRef } from "@nestjs/common";
 import { SessionsController } from "./sessions.controller";
 import { SessionsService } from "./sessions.service";
@@ -12170,136 +12093,6 @@ export class WorkflowController {
 ## File : `src/modules/workflow/workflow.engine.ts`
 
 ```ts
-// import { Injectable, Logger } from "@nestjs/common";
-// import { PrismaService } from "../../prisma/prisma.service";
-// import { SessionManagerService } from "../sessions/session-manager.service";
-// import { WorkflowService } from "./workflow.service";
-// import { toJid } from "../../common/utils/phone-normalizer.util";
-
-// type NodeType = "send_message" | "delay" | "add_tag";
-// interface WorkflowNode {
-//   id: string;
-//   type: NodeType;
-//   config: any;
-// }
-
-// @Injectable()
-// export class WorkflowEngine {
-//   private logger = new Logger("WorkflowEngine");
-
-//   constructor(
-//     private prisma: PrismaService,
-//     private manager: SessionManagerService,
-//     private workflowService: WorkflowService,
-//   ) {}
-
-//   async process(userId: string, sessionId: string, from: string, text: string) {
-//     const workflows = await this.workflowService.getActive(userId);
-
-//     for (const wf of workflows) {
-//       const condition = wf.triggerCondition as any;
-//       if (!this.matchesTrigger(condition, text)) continue;
-
-//       const logs: string[] = [];
-//       let status = "completed";
-//       let errorMessage: string | null = null;
-
-//       try {
-//         const nodes = wf.nodes as WorkflowNode[];
-//         for (const node of nodes) {
-//           await this.executeNode(node, sessionId, userId, from, logs);
-//         }
-//       } catch (e) {
-//         status = "failed";
-//         errorMessage = e.message;
-//         this.logger.error(`Workflow ${wf.id} failed: ${e.message}`);
-//       }
-
-//       await this.prisma.workflowLog.create({
-//         data: {
-//           workflowId: wf.id,
-//           userId,
-//           contactNumber: from,
-//           status,
-//           logs,
-//           errorMessage,
-//         },
-//       });
-//       await this.prisma.workflow.update({
-//         where: { id: wf.id },
-//         data: { executionCount: { increment: 1 } },
-//       });
-//       break; // One workflow per message
-//     }
-//   }
-
-//   private async executeNode(
-//     node: WorkflowNode,
-//     sessionId: string,
-//     userId: string,
-//     from: string,
-//     logs: string[],
-//   ) {
-//     const jid = from.includes("@") ? from : toJid(from);
-
-//     switch (node.type) {
-//       case "send_message":
-//         await this.manager.sendMessage(sessionId, jid, node.config.message);
-//         logs.push(`[send_message] Sent: "${node.config.message.slice(0, 50)}"`);
-//         break;
-
-//       case "delay":
-//         const ms = (node.config.seconds || 1) * 1000;
-//         await new Promise((r) => setTimeout(r, ms));
-//         logs.push(`[delay] Waited ${node.config.seconds}s`);
-//         break;
-
-//       case "add_tag":
-//         const phone = from.split("@")[0];
-//         const contact = await this.prisma.contact.findFirst({
-//           where: { userId, number: phone },
-//         });
-//         if (contact) {
-//           await this.prisma.contact.update({
-//             where: { id: contact.id },
-//             data: { tag: node.config.tag },
-//           });
-//         } else {
-//           await this.prisma.contact.create({
-//             data: { userId, name: phone, number: phone, tag: node.config.tag },
-//           });
-//         }
-//         logs.push(
-//           `[add_tag] Tagged contact ${phone} with "${node.config.tag}"`,
-//         );
-//         break;
-
-//       default:
-//         throw new Error(`Unknown node type: ${(node as any).type}`);
-//     }
-//   }
-
-//   private matchesTrigger(condition: any, text: string): boolean {
-//     if (!condition?.keyword) return false;
-//     const t = text.toLowerCase().trim();
-//     const k = condition.keyword.toLowerCase().trim();
-//     switch (condition.matchType) {
-//       case "exact":
-//         return t === k;
-//       case "contains":
-//         return t.includes(k);
-//       case "regex":
-//         try {
-//           return new RegExp(condition.keyword, "i").test(text);
-//         } catch {
-//           return false;
-//         }
-//       default:
-//         return false;
-//     }
-//   }
-// }
-
 import { Injectable, Logger, Inject, forwardRef } from "@nestjs/common";
 import { PrismaService } from "../../prisma/prisma.service";
 import { SessionManagerService } from "../sessions/session-manager.service";
@@ -12434,20 +12227,6 @@ export class WorkflowEngine {
 ## File : `src/modules/workflow/workflow.module.ts`
 
 ```ts
-// import { Module } from "@nestjs/common";
-// import { WorkflowController } from "./workflow.controller";
-// import { WorkflowService } from "./workflow.service";
-// import { WorkflowEngine } from "./workflow.engine";
-// import { SessionsModule } from "../sessions/sessions.module";
-
-// @Module({
-//   imports: [SessionsModule],
-//   controllers: [WorkflowController],
-//   providers: [WorkflowService, WorkflowEngine],
-//   exports: [WorkflowEngine],
-// })
-// export class WorkflowModule {}
-
 import { Module, forwardRef } from "@nestjs/common";
 import { WorkflowController } from "./workflow.controller";
 import { WorkflowService } from "./workflow.service";

@@ -27,18 +27,6 @@ export class SessionManagerService implements OnModuleInit, OnModuleDestroy {
   private clients = new Map<string, Client>();
   private reconnectTimers = new Map<string, NodeJS.Timeout>();
 
-  // constructor(
-  //   private prisma: PrismaService,
-  //   private redis: RedisService,
-  //   private gateway: GatewayService,
-  //   private notifications: NotificationsService,
-  //   private inbox: InboxService,
-  //   private autoReply: AutoReplyEngine,
-  //   private workflow: WorkflowEngine,
-  //   private webhook: WebhookService,
-  //   private cfg: ConfigService,
-  // ) {}
-
   constructor(
     private prisma: PrismaService,
     private redis: RedisService,
