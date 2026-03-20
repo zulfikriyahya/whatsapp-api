@@ -9,9 +9,19 @@ const api = axios.create({
 api.interceptors.response.use(
   (res) => res,
   (error) => {
-    if (error.response?.status === 401 && typeof window !== 'undefined') {
+    const status = error?.response?.status
+    const url = error?.config?.url ?? ''
+
+    // Redirect ke login hanya jika 401 DAN bukan dari /auth/me
+    // (auth/me sudah ditangani di AuthProvider sendiri)
+    if (
+      status === 401 &&
+      typeof window !== 'undefined' &&
+      !url.includes('/auth/me')
+    ) {
       window.location.href = '/login'
     }
+
     return Promise.reject(error)
   }
 )

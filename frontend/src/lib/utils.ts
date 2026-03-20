@@ -7,8 +7,12 @@ export function cn(...inputs: ClassValue[]) {
 
 export function formatDate(date: string | Date): string {
   return new Intl.DateTimeFormat('id-ID', {
-    day: '2-digit', month: 'short', year: 'numeric',
-    hour: '2-digit', minute: '2-digit',
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: 'Asia/Jakarta',
   }).format(new Date(date))
 }
 
@@ -37,5 +41,6 @@ export function truncate(str: string, n: number): string {
 }
 
 export function buildFileUrl(filename: string): string {
-  return `${process.env.NEXT_PUBLIC_API_URL?.replace('/api/v1', '')}/api/v1/storage/uploads/${filename}`
+  const base = process.env.NEXT_PUBLIC_API_URL?.replace('/api/v1', '') ?? ''
+  return `${base}/api/v1/storage/uploads/${filename}`
 }
